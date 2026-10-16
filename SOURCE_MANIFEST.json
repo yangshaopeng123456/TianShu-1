@@ -1,0 +1,913 @@
+{
+  "date": "2026-10-16",
+  "prepared_by": "codex",
+  "name": "Tianshu-1 source candidate",
+  "manifest_excludes_itself": true,
+  "files": [
+    {
+      "path": ".env.example",
+      "bytes": 341,
+      "sha256": "95b634c06100d5412a67cef76ba1d0791cfea0026f6d47d3c44cbfd0c8a33f8e"
+    },
+    {
+      "path": ".gitattributes",
+      "bytes": 72,
+      "sha256": "e69adf0c3eb9532de28494072312801fab2eafbf21fc1eecb06ee74601f2ff5e"
+    },
+    {
+      "path": ".gitignore",
+      "bytes": 431,
+      "sha256": "482f8f2bbe76ede163a7aed85f62f3846bcf0d194579767e2397e5dde0f928c4"
+    },
+    {
+      "path": "docs/使用说明.md",
+      "bytes": 6809,
+      "sha256": "c8cb5a45e13529e4c6a9d4f9ee4ca0606fa80da091b7c250b09e6ccd36a0539f"
+    },
+    {
+      "path": "dpf_agent/cases/bus_reference_probe/Master.dss",
+      "bytes": 804,
+      "sha256": "746c876d0fd02f2f2cabf455b0f1764c06072c780455db04caed6311d0f73261"
+    },
+    {
+      "path": "dpf_agent/cases/case4/Master.dss",
+      "bytes": 688,
+      "sha256": "62dd443f10e689bd28cda3c2ba9f9aaa1cfd7918626528a6d5a9d7afbc18b491"
+    },
+    {
+      "path": "dpf_agent/cases/case_broken/Master.dss",
+      "bytes": 306,
+      "sha256": "11a9d2bbfa3d0746c5eafa32104bd10571b0b59764e3b17f01ddda19abc09f2c"
+    },
+    {
+      "path": "dpf_agent/cases/case_nonconv/Master.dss",
+      "bytes": 953,
+      "sha256": "add2998d900ce9dcc79de4154e5973b14a539de77722dc1b162e9b03a9a01507"
+    },
+    {
+      "path": "dpf_agent/cases/case_tx/Master.dss",
+      "bytes": 720,
+      "sha256": "bc228d8e848ea43159ee8380964a8327bc559d56599ccb4ad1dbf7f108e52c24"
+    },
+    {
+      "path": "dpf_agent/cases/pvsystem_probe/Master.dss",
+      "bytes": 744,
+      "sha256": "7acceb4da499844e4ec54be61e61db4b1be9d0accc2f518c5897ce094abec185"
+    },
+    {
+      "path": "dpf_agent/cases/storage_discharge_probe/Master.dss",
+      "bytes": 822,
+      "sha256": "f4139175032c849351b854f2424502dec4517b82074fdece52a13f676454efe5"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/__init__.py",
+      "bytes": 1610,
+      "sha256": "3ef2ec92fd9d284961d1236a4a505fff4ed1aa8f210f689d5c3ce1c0691757b6"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/__main__.py",
+      "bytes": 88,
+      "sha256": "d2a94ff2a583c126e565bf3f9dfba045c0fd1b2c1f84408eddd296497024ee42"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/application/__init__.py",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/application/progress.py",
+      "bytes": 4794,
+      "sha256": "793f74ccbba3926e96b6bda6655fd41d6e745dc235f845254a141f68255f864d"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/application/service.py",
+      "bytes": 51833,
+      "sha256": "e7f36183ded0492aae221117ca780402e57889a76ce04cc3490b47080bca826b"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/cli/__init__.py",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/cli/main.py",
+      "bytes": 6371,
+      "sha256": "d485a47be9b9b7a06f24355e653b3da35365bb23946ab6ac88785f96b687eabb"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/config.py",
+      "bytes": 13712,
+      "sha256": "8af3e1c13924750015de262208c70fdbde740b0539f15f9cc69745959d8dbf21"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/domain/__init__.py",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/domain/capabilities.py",
+      "bytes": 20004,
+      "sha256": "dc7e234295ecd641ccf25bdfbac41c11eae4ebde3ad6006eecaa7b793b055386"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/domain/case/__init__.py",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/domain/case/case_loader.py",
+      "bytes": 19264,
+      "sha256": "ab24c1b35f4d2b5f67570d84505f0d1e4baeada19501ffb0ed7dd8e2c1c1d24a"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/domain/diagnosis.py",
+      "bytes": 16172,
+      "sha256": "0fa2b8c9ec6d4f1a704084733017ee061b8421f2c29593be0b50d9c84b6cae51"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/domain/network_profile.py",
+      "bytes": 12015,
+      "sha256": "7c531ba5a31499d0980d6f16e2f98b7a9aa3d9d65411bd66d76f6a8e2bf3e6f1"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/domain/result_normalizer.py",
+      "bytes": 17153,
+      "sha256": "26028f89fd99b13afcddb473722f842d066a291ecc7eed9e53308ce5c2118f41"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/domain/solver_profile.py",
+      "bytes": 3180,
+      "sha256": "10cbb527e7ac42d1397dabb3e65492b1ced05598ed673170b008c6b7f2c8540d"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/domain/unbalance.py",
+      "bytes": 6523,
+      "sha256": "f93d8cf42312e73edf961f87a6a9ac048891a5fb32240129f4b3708936af6995"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/engines/__init__.py",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/engines/circuit_inventory.py",
+      "bytes": 5779,
+      "sha256": "37b63046a08a31c073f6c0eed4bdbc12abe5a33282b3c9aacc3189e99b7f3c40"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/engines/circuit_validation.py",
+      "bytes": 5042,
+      "sha256": "fb99f2ac4a531af3953e9397db76245f15050f1223c08ef1df342b1a5de3776b"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/engines/cli_runner.py",
+      "bytes": 20560,
+      "sha256": "4d6d0128ab22368b016856ccb27018344606ccce4d57442c6b7b91363e51b41b"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/engines/dss_source.py",
+      "bytes": 17134,
+      "sha256": "8305bc21924f9fd4cd67d00cf423c89ad658764097dbf5db351e4e7e14d46519"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/engines/fidelity_mapping.py",
+      "bytes": 20011,
+      "sha256": "d47348e93c5bc009bbe910e4b4e328cbbaa1090b8792893792eee081524d8ecc"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/engines/opendss_adapter.py",
+      "bytes": 27810,
+      "sha256": "b8bbf2163da8327d68d26d7b3c46b01b58fb5b7f4d911a5c8f7516b94504a890"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/engines/opendss_cli_adapter.py",
+      "bytes": 43010,
+      "sha256": "661dd7c858b203f3db4577a4e8cd3b1dcb5a457b044b7fb3c385971ca559d25b"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/engines/opendss_com_adapter.py",
+      "bytes": 29077,
+      "sha256": "c8943519adc51a2bbec90242993e7d16c1d0fa11cc2af731c9c58bc9a842ba03"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/engines/opendss_process_adapter.py",
+      "bytes": 21492,
+      "sha256": "a09837d90dc6b7599745dfa014b3be141acd6bc411ea3a47f2136235e5ac6a85"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/evals/__init__.py",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/evals/run_conversion_fidelity.py",
+      "bytes": 34630,
+      "sha256": "d9ef545c521ca169d59f9926b4c8fba1dc7ca6690ca467d575d4784f3b714dcd"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/evals/run_eval.py",
+      "bytes": 43199,
+      "sha256": "d770edef02879cd5d55cb880dd14f351c902e9ca9aa9fd5b2320152546f914e6"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/evals/run_metrics.py",
+      "bytes": 13558,
+      "sha256": "37b7eea6b0f3e0a9466f31fc2463efec6b98f6d795a5ae3c0ef824a78e7bea3e"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/evals/run_unbalance_scan.py",
+      "bytes": 11074,
+      "sha256": "f0839ddebad622d0420f200779a92260baf06ec661dd998c229d4b5144183779"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/evidence/__init__.py",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/evidence/builder.py",
+      "bytes": 5938,
+      "sha256": "a17257a4633393c5279d1c2848dd44e613437c0faa627b5bb48d9dffcd623a5b"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/knowledge/knowledge_items.json",
+      "bytes": 2829,
+      "sha256": "23b9674ad03d741d1a3085ea68a94905b896ced990faabddf03083245b3dfa69"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/paths.py",
+      "bytes": 2661,
+      "sha256": "f531c7692e6dee6b7ba590f037908d6fa9a314595138e38d94dc5b983dd3eca7"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/prompts/__init__.py",
+      "bytes": 19616,
+      "sha256": "e5484fbb5b99226d5b9aa5b32b2399de404282a516302437f7fc394fcf9bd4df"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/rag/__init__.py",
+      "bytes": 1119,
+      "sha256": "f04563530f30c719795520b5623198480eeb36816663f9f6cc4034286a52a2c0"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/rag/__main__.py",
+      "bytes": 1973,
+      "sha256": "bbcfff0eb8b0f7c3e69380dc509d12ccf8598ab57884b9bb547ed5cc93dfe96a"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/rag/chunker.py",
+      "bytes": 2438,
+      "sha256": "8bb698769139ac26e1375aa09390287f2b5102e235f43a7cae4d4ce56debaac0"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/rag/config.py",
+      "bytes": 2062,
+      "sha256": "8a3480964530a7e8e5ab1f962fe200f307f5ef53b1f78bfd0fb8379c87454193"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/rag/loader.py",
+      "bytes": 5209,
+      "sha256": "839f19f466e155d8bfea5b57e2d3d1bab7652cae909ebd9e1bc40dce9d4002b7"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/rag/pipeline.py",
+      "bytes": 14385,
+      "sha256": "151384de23619d0ba70bcf43579db682c452490e03de9cd7c3ecc40c48163029"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/rag/power_rag.py",
+      "bytes": 5082,
+      "sha256": "6bb2e3d7cfda8bf06494c587ebd6766f1816f1cf5fe208eae945865fecd66e14"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/rag/power_rag_client.py",
+      "bytes": 11568,
+      "sha256": "d53b7fa3956ee8bc78bf962075fcecc3526d1e455e943fdfbc26687482d85482"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/rag/retriever.py",
+      "bytes": 2631,
+      "sha256": "650ef6fcbd8fe4d8734c6cf6019932b70398d4ba30284094dedf82a9d78aa51a"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/rag/store.py",
+      "bytes": 3449,
+      "sha256": "d50dcf81b4fa5d7233b8ce25a7f72efc0dbeb15043572a129af80435f00348c5"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/rag/tokenize.py",
+      "bytes": 2275,
+      "sha256": "dedd44b9c46ee076af67b7277161032706034d9eab372cee01d3bb53f02fe489"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/release_gate.py",
+      "bytes": 23960,
+      "sha256": "dd64e6021b71ca0859804727ce90092bd1e9fa67fecef2107a2f9f67eb884134"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/renderers/__init__.py",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/renderers/markdown_renderer.py",
+      "bytes": 27291,
+      "sha256": "27c65f0214702090142b1865de45b87900fd593c1d674fe0e98fafb64b9af1ef"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/runtime/__init__.py",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/runtime/cancellation.py",
+      "bytes": 932,
+      "sha256": "9f96965e797ce7bb5474c21918784bff2308a66e74642484d1657a089ec1cc45"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/runtime/crashlog.py",
+      "bytes": 11057,
+      "sha256": "d4fc7ad8eed382f5e4aa27d683766346c9b7b3d17079762e57eb57b296e34418"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/runtime/guard.py",
+      "bytes": 6884,
+      "sha256": "872fe91e8d78f197528eb59e2ee8158ce8e7ddbefe3611b1141e9dc918bd0dea"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/runtime/intent.py",
+      "bytes": 13839,
+      "sha256": "03c447168d1fc5a8b3b4d9b2a59829dee19361ac5a5579ccf1a5909fadcbed71"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/runtime/model_client.py",
+      "bytes": 40607,
+      "sha256": "aa35b5f83e08d44766f529835c49259eea2fa5f045d21fe4da1eb00a610618c4"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/runtime/narration.py",
+      "bytes": 19316,
+      "sha256": "f01a462eae64b00d8b3e9e132a79f2d58da08666c3e2df36cf0b53833e6dc189"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/runtime/tracing.py",
+      "bytes": 2768,
+      "sha256": "a3968c92b6745ccb30aabef582aa88488aee8a35757feee3a036a67e48e791d7"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/runtime/watchdog.py",
+      "bytes": 15784,
+      "sha256": "d7e139f4691cd1735a8debe6211c28ad43e7d0deb1dbfacb1a356da88657ee86"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/schemas/__init__.py",
+      "bytes": 1549,
+      "sha256": "30f6b161e9de335bb1cf56b125715aec2855fd17749dc770a0084b5b0f9b75d0"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/schemas/case.py",
+      "bytes": 1635,
+      "sha256": "d36efff17e1e81c3ce7512d5ea1e65e0b47501b6ea0c84967df026a098e4e6f1"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/schemas/enums.py",
+      "bytes": 5917,
+      "sha256": "5c582d0260eb4af05b5a5c019d8dcf8bcc5abed2f61928ea32440c11098c1921"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/schemas/evidence.py",
+      "bytes": 1307,
+      "sha256": "f84fc1b053fd7359d87f1adb087ec666c5bb26181ea81cdaeecbce529fb53827"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/schemas/result.py",
+      "bytes": 8199,
+      "sha256": "ba9b5470b6f2a96577a72655cf1394748a8b5c56cbac83fb7eb8e7ce12f63e04"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/schemas/solver.py",
+      "bytes": 1744,
+      "sha256": "7a1af060c4747673f26219961b710a1e4fb290cec9925b4aef868d5bd48c4632"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/schemas/state.py",
+      "bytes": 2745,
+      "sha256": "f7f9bb888c2c26dde3b5a2f56f37fb6b266ae74a9115ff9db2a6d8af93a021f1"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/schemas/task_spec.py",
+      "bytes": 2336,
+      "sha256": "478bd1ef6ec63dd6307f8f69cf51914b950fb8672d08cd0027cde2b1536007f0"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/schemas/verification.py",
+      "bytes": 963,
+      "sha256": "f3ad16616ddfe415d8f832cfb525b9e112478edebf131a50e9a688c35e7757ad"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/skills/__init__.py",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/skills/powerflow_skill.py",
+      "bytes": 34656,
+      "sha256": "4b34cee16f6484984f58c53cb463ed85bc08a37ea936be358ac56287da7c74a5"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/static/index.html",
+      "bytes": 22495,
+      "sha256": "83d3a673f9357da1ff1900727028ea6da648443b9173a2a2e9fc3d6d4702998a"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/tests/__init__.py",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/tests/_process_fixture.py",
+      "bytes": 4031,
+      "sha256": "cabfe4c86bcb08289da9c6e4c74608777c7229a7b142cd484692274db03bf4bf"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/tests/dep_guard.py",
+      "bytes": 15845,
+      "sha256": "30e20448a3c70d343584c64c487048d192ae99751ede36703f5babd40070a98d"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/tests/intent_golden.py",
+      "bytes": 11859,
+      "sha256": "4a430e69a9be70244016b66b534a4eb63d2c0cb37f39abd35775bf7bc9b3fb2a"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/tests/run_all.py",
+      "bytes": 7565,
+      "sha256": "10e3b902a46e837b47f45e7f2d071fbcc8272460bc5e980c73d98b4a9749ceb4"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/tests/test_batch_scheduler.py",
+      "bytes": 32242,
+      "sha256": "9adbbeac973cbb3871105c84053888cf386f3f081f6e9de81760c4ebb79e018a"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/tests/test_case_converters_modeling.py",
+      "bytes": 11610,
+      "sha256": "af1e0b5593095436127276036b107f70ac3cdd2b93e43f2625fb4234bf1be1bb"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/tests/test_case_data_dependencies.py",
+      "bytes": 4509,
+      "sha256": "69a2a276c2ba7f538c85f70dc2bd99d2e77d83af78ffb18b7602e99a927acb8c"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/tests/test_case_product_guard.py",
+      "bytes": 13400,
+      "sha256": "03d8a9862ecc1a985b936bedd6a17910ed8b7e513e031e7c7d42e8d7d6aef418"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/tests/test_case_upload.py",
+      "bytes": 18087,
+      "sha256": "afc7d4bb2a735c8a73177fbf76b10dce9a6248b9b1586134ebb94c5bf2dc5128"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/tests/test_chat_cancellation.py",
+      "bytes": 4465,
+      "sha256": "5d31b401c07df7ced3da78a47401a9ad4d472d00740ce2f0aa4487f834ff7e0a"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/tests/test_circuit_validation.py",
+      "bytes": 8715,
+      "sha256": "1d97e9690bcf28dd6de6e39499967b38c543cfc3981234e038400630550efce7"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/tests/test_cli_adapter.py",
+      "bytes": 18728,
+      "sha256": "0d706ed61dfad58bd5d15584f1a6c3e7b7f98eebe964d650ebe4fcd169eaeda1"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/tests/test_cli_runner.py",
+      "bytes": 17314,
+      "sha256": "ad99708136473f5afedc79fd108ea39f25cd4ddd7dba5cf39aec2cc5a34d2497"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/tests/test_conversion_cache.py",
+      "bytes": 7973,
+      "sha256": "d1383247f00657918a111b2c919145762134d6bdf4b2254b400d607820cfe66c"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/tests/test_conversion_fidelity.py",
+      "bytes": 21424,
+      "sha256": "9d0fe6a4695ed435c73d9c52987631536423c3c7247b6063caf9850ccece17ff"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/tests/test_conversion_publication.py",
+      "bytes": 19564,
+      "sha256": "c3a3ce12e85e60d91c7ae1becac6811bf40fc2f90059ec27652f2a796d16aeeb"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/tests/test_conversion_semantics.py",
+      "bytes": 22423,
+      "sha256": "7f6e1edef1b1efac1930a70f7a8dad87bd6e1cbc8ff2e41dffa6241dac1bc0da"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/tests/test_conversion_validation.py",
+      "bytes": 22886,
+      "sha256": "0513b5018cdea7b2115019cea9ee327754529d1b000b8d51b55bc246b13de76e"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/tests/test_crash_observability.py",
+      "bytes": 26784,
+      "sha256": "299c6101e5754e1863dd37689c9b20d7f3553947504376a0b385d1acf26c819d"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/tests/test_engine_resilience.py",
+      "bytes": 28162,
+      "sha256": "b7bd39779d801673234dcb78b177c3062e682ce2e4b11e4a6fbae4117a8dbc88"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/tests/test_fidelity_mapping.py",
+      "bytes": 18983,
+      "sha256": "2ce96c288bd2c0012fb0b45b039791c9537063517bf208a2763823ec90c84f09"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/tests/test_focus_answer.py",
+      "bytes": 32722,
+      "sha256": "4581206f8613292a615cb652e5390e4f059e0993fcc731c2b9e1ab10aba2864c"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/tests/test_history_fastpath.py",
+      "bytes": 19753,
+      "sha256": "1f0a863726b7be611d070b2aca7b814a0b9e3ff9e8c70beddc27a8cdeef70f07"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/tests/test_judgment_selftest.py",
+      "bytes": 18789,
+      "sha256": "a6292e40fec581079861b2f62ab5024e52eca2d190075daad8fcd7716740ba71"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/tests/test_load_caliber.py",
+      "bytes": 24756,
+      "sha256": "559daa075d54bed64238f92d1cffbc2c6dbb7d2b376a02491ae94cad78507414"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/tests/test_matpower_parser.py",
+      "bytes": 11462,
+      "sha256": "bb95ec03a44108694a81fd0bbbaac632677a3239fda9b6742db499c4859deb24"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/tests/test_narration.py",
+      "bytes": 9846,
+      "sha256": "3e0e4e3dead142fdd1f73b453ff4ef35b9c9bf0831eeb0db004baf590c5d90e8"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/tests/test_network_profile.py",
+      "bytes": 12416,
+      "sha256": "5d327cce1f0ac2339cd2f113061a164b64be4861be0e39585d7ef920c69d18a7"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/tests/test_phase_modeling.py",
+      "bytes": 31114,
+      "sha256": "46ae3b0474b8dcad2acaffd83951aaed670578595645f0cb32e6a666c2cf7900"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/tests/test_process_isolation.py",
+      "bytes": 16232,
+      "sha256": "5ba2d308e497f6932c62b47ff6a967c1e1cb0619660f693e816e38421d7cdf65"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/tests/test_recovery_verification.py",
+      "bytes": 23416,
+      "sha256": "2775149f3f518a0c1b586ed3b3641c835a7d490bdafb45e3ddd5c4ca246e0ed8"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/tests/test_release_gate.py",
+      "bytes": 16453,
+      "sha256": "6fae7eb63e3abff3b68794473cd64ff3c25d44e77adbdd915fef2124f1d6ad24"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/tests/test_report_caliber.py",
+      "bytes": 51028,
+      "sha256": "fe346052b6ca8526e182cea8058e0ab10fdccc4379896602412971acc1f7301f"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/tests/test_service_lifecycle.py",
+      "bytes": 13142,
+      "sha256": "92d47abc65397b1ec5e521ec10ab59c48d6ee4a15fb112cc46125f8eae6cab92"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/tests/test_snapshot_stability.py",
+      "bytes": 14777,
+      "sha256": "c073a5ead489dcc4a79f2a9b03a469aa8048a3fcbae89b1fbcbe48d858c69e73"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/tests/test_solve_cache_key.py",
+      "bytes": 23379,
+      "sha256": "f1f68efe07ad43d3eefa64cb005a560d216b0616bfaa818878b0464f8bb7aa8a"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/tests/test_storage_admin.py",
+      "bytes": 16272,
+      "sha256": "b42f9e5f5da46f668c84d11e4832f5fe025bcdf5d5ba3090c2502d37b944b9a9"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/tests/test_task_recovery_api.py",
+      "bytes": 4264,
+      "sha256": "7b3bb3c9a82664f8a918c83d29d4f0d1fbc9ee3546dd4b4b3c11fa13cdc8fb9c"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/tests/test_unbalance.py",
+      "bytes": 5711,
+      "sha256": "cce219847cdc4c12ec8685b10e8962ccf1fe72ee94b47bae2751a51079789f32"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/tests/test_upload_model_integrity.py",
+      "bytes": 12849,
+      "sha256": "51fa74d8a1b9d4d9149c4e2d2d102126329c420114b226fc69c6bcd3243ccf25"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/tests/test_watchdog.py",
+      "bytes": 17254,
+      "sha256": "fe489cd1b891343e3eed20ffdf83cd098c497ac9593b1eec00f729edc8b37989"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/tools/__init__.py",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/tools/base.py",
+      "bytes": 8915,
+      "sha256": "c6330653d809913f7b78636b083035cbec3ff1a8e244a540d5bc3dfc51f02f74"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/tools/powerflow_tools.py",
+      "bytes": 37883,
+      "sha256": "cffbfdf7164ebf07ec558e06493ad69bf78d93dfa89bf26f1641f419bec7107a"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/tools/rag_tools.py",
+      "bytes": 3328,
+      "sha256": "c73c378637667aeb602123cdcf3995a1e30c78e8a570d7d40ffb1d93232c16b8"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/tools/snapshot_stability.py",
+      "bytes": 11669,
+      "sha256": "30aa83cfc80a6af4e103c57bae37898df8acf88a10a85cfd7f85f04e5b494c8f"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/verification/__init__.py",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/verification/verifier.py",
+      "bytes": 17495,
+      "sha256": "9167b288db7f80deebf2096dc1f428ac9b46644fcf0bfeb92aadf9a92c2624d9"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/web/__init__.py",
+      "bytes": 117,
+      "sha256": "b87b39d3d73176288e8e63c8e69de03313de2438886af9deeb13fd79154eae92"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/web/api.py",
+      "bytes": 32198,
+      "sha256": "4a0447f9576ad2f96ffbed40e011cbb3950b93cc8aa5162b10f3ccbbb759427c"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/web/batch_scheduler.py",
+      "bytes": 6621,
+      "sha256": "c9fea7770cfb6e97b0c3d3847ec63ed472e6da490c5301d2b75ba3c4220266ed"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/web/batch_store.py",
+      "bytes": 17163,
+      "sha256": "1fe1d7ccce12193cc2a7b0153cc2d031569e6a66676470766500388924b9b0c1"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/web/case_converters.py",
+      "bytes": 81200,
+      "sha256": "3bb7e57a2b088449b60aeda378a0baced70febedcdf36fc25f5dd48a7875f6af"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/web/chat_api.py",
+      "bytes": 173580,
+      "sha256": "9bbae6e02167cfa3814de691921a3fb8f4a5926a09346ccf59bb7d736ac88ffa"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/web/chat_store.py",
+      "bytes": 9356,
+      "sha256": "2f2a0a0dcf673f5b26394aedc7121ed5aa7fd031eabcf0aaaead5633e611b4b0"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/web/conversion_cache.py",
+      "bytes": 25581,
+      "sha256": "1562dd8458c658206ec3170ce3c4108c67e82faef94f4c269832e20bf7509fd4"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/web/conversion_validation.py",
+      "bytes": 16249,
+      "sha256": "a2fb3bb7c9a70ceafa6b0583928181d797c1541b3f2305a3573239f9c41568d5"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/web/history_fastpath.py",
+      "bytes": 11274,
+      "sha256": "9981a43c6b9157d7ef708dbf86a6bad792e26571ef90651209f3b21fa6d374d0"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/web/history_qa.py",
+      "bytes": 40983,
+      "sha256": "b64230683ba6c02f1e6c7809b42ee65c866f9242c6a557fe339dfc15586ec829"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/web/matpower_parser.py",
+      "bytes": 17506,
+      "sha256": "300e55bd006c168f9ff8c157d1a0a95bb4ada77eda323ce8b4c9291092686980"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/web/phase_model.py",
+      "bytes": 15205,
+      "sha256": "563862877b43770522945ad0db01f5749cd97afbeb50f14ce5c3ed3047f41717"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/web/schemas.py",
+      "bytes": 1320,
+      "sha256": "a41bee4a005c209e99a4db884dfd428acd597ab5a6cf82f3915f05b710e0e335"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/web/server.py",
+      "bytes": 8626,
+      "sha256": "2c6d79ef0c803641383966b37dd683f9cf86dfcbcc1460699532b1e79d255a8b"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/web/storage_admin.py",
+      "bytes": 21813,
+      "sha256": "6e5ae4411081d0d580153e0aa76ca8a9aa401c83db96177a505917a24168e367"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/web/stream_api.py",
+      "bytes": 11977,
+      "sha256": "902e05ad212491c83e099fd1fec12cad75cdda2e99d0527e2b3e0604b0d13111"
+    },
+    {
+      "path": "dpf_agent/dpf_agent/web/xlsx_to_dss.py",
+      "bytes": 350,
+      "sha256": "882f584f8ea469310e6000c4bbe2fc116511d284728201248ba845a1d89cc6d3"
+    },
+    {
+      "path": "dpf_agent/knowledge/README.md",
+      "bytes": 595,
+      "sha256": "96a3bebaea5b9af41b2096d27859c66dc7bbe7da7abad1abc3ed434d3bdc8a01"
+    },
+    {
+      "path": "dpf_agent/README.md",
+      "bytes": 4790,
+      "sha256": "2458b6c5e95da5d94ef701d2c78440b6ad691a8cedb0d74decabcee6eff58382"
+    },
+    {
+      "path": "dpf_agent/requirements-com.txt",
+      "bytes": 300,
+      "sha256": "86990c4ad0c7d5aa8c725b40305d8ce496f3fa4579f0e1b9297955d8fa169c54"
+    },
+    {
+      "path": "dpf_agent/requirements-windows-py313.lock.txt",
+      "bytes": 749,
+      "sha256": "ca34fe421e848cbd21c267cef0043ae049ed09eea5d8b7720a3eedbe88c7080b"
+    },
+    {
+      "path": "dpf_agent/requirements.txt",
+      "bytes": 2677,
+      "sha256": "1acefc1e6131dc29a6c0683d4487df3b07e2d5fea100035899e233dd7d3891da"
+    },
+    {
+      "path": "examples/cases/README.md",
+      "bytes": 602,
+      "sha256": "ebdb27ddec7dc40b276ba209e7c857dbbfd4d799eb2ff735778f1d74db09f579"
+    },
+    {
+      "path": "LICENSE",
+      "bytes": 11353,
+      "sha256": "274577f988132489c1d4cc0e7706abcbc367b96b84fdeacdf705ce27752a954f"
+    },
+    {
+      "path": "NOTICE",
+      "bytes": 945,
+      "sha256": "1934d6d4480bc412d9119c35c4e78cb43b8cbcc2bc61e850b9323eccd051e09e"
+    },
+    {
+      "path": "README.md",
+      "bytes": 6648,
+      "sha256": "5eb44a905c274fe46301c42dfb7ad8e32e86aff6b4fb710a90be012f7df84d0a"
+    },
+    {
+      "path": "scripts/install-electron.py",
+      "bytes": 3500,
+      "sha256": "c3694e569b72f36784f86656a2cf0faf7a1c2181aa41e801db0fd42d87f78d51"
+    },
+    {
+      "path": "scripts/run-demo.ps1",
+      "bytes": 1154,
+      "sha256": "8ad87fce3a9efe215419bcf7b3db32ab5a09c61fc16a4a630beb7fd0257df0bb"
+    },
+    {
+      "path": "scripts/启动天枢一号.bat",
+      "bytes": 132,
+      "sha256": "f5363e3039ae3758693a1fd400c3717265bd7129a3d62cee5af5da8c175dfd75"
+    },
+    {
+      "path": "SECURITY.md",
+      "bytes": 1080,
+      "sha256": "8923cc2218b078cd6f6ffe37c6b8f8f01ec4ef06a2f244dab9bf6e79fbbc6338"
+    },
+    {
+      "path": "THIRD_PARTY_NOTICES.md",
+      "bytes": 9719,
+      "sha256": "c6c4ef072e04211426342603a23c9df45d7b958310346813b258dc3401fa2c9f"
+    },
+    {
+      "path": "tianshu_ui/backend_lifecycle.js",
+      "bytes": 10432,
+      "sha256": "3ad33a428d4c4b613fc84a1183b501fdcacf2baff255ef8ee6c6a157e36b23e7"
+    },
+    {
+      "path": "tianshu_ui/launch.js",
+      "bytes": 1057,
+      "sha256": "03088487ee02a97f5e28f3a57fb049bdc2fe075257f27f70fecfd74031fa1b21"
+    },
+    {
+      "path": "tianshu_ui/main.js",
+      "bytes": 19716,
+      "sha256": "b695719a2adfd45052793dae684f8fdb3fa4d8d5038140239a9f4307116b2ac5"
+    },
+    {
+      "path": "tianshu_ui/package-lock.json",
+      "bytes": 6020,
+      "sha256": "eafd0595271780e597a9dee04ab5de355b90bfea3ef6c92da0a90ef3c09d667f"
+    },
+    {
+      "path": "tianshu_ui/package.json",
+      "bytes": 426,
+      "sha256": "59beb71592b73a426fc12ee8540b9294446cc9cc486b46cf7a946a3e6c7ffb1c"
+    },
+    {
+      "path": "tianshu_ui/preload.js",
+      "bytes": 1637,
+      "sha256": "e9d9570b4bdca2977d4372521f3423ade8208abe65f7d8391a6d1c255c186e2f"
+    },
+    {
+      "path": "tianshu_ui/README.md",
+      "bytes": 4370,
+      "sha256": "624d1c58e235442e058320b585767fd2d96c11ce508d3f150599bc3f1ba92d60"
+    },
+    {
+      "path": "tianshu_ui/renderer/app.js",
+      "bytes": 151036,
+      "sha256": "542ac3f6aa5cfc94c9f99fee3fac8d83218fc0274d6d57478075c6c96da56f40"
+    },
+    {
+      "path": "tianshu_ui/renderer/index.html",
+      "bytes": 8437,
+      "sha256": "d643407fd9e3aa74e066b4b8346f47285f72874b0fc5295d57a1168af35eb4b2"
+    },
+    {
+      "path": "tianshu_ui/renderer/styles.css",
+      "bytes": 21049,
+      "sha256": "d6a2154c88cf1c3ec72c1dd2dbeec93922b44ea8aeecf2eced903acb7e7c88ed"
+    },
+    {
+      "path": "tianshu_ui/setup-electron.js",
+      "bytes": 726,
+      "sha256": "ac0f35bc36d1f357e07c1af07493f89e1f48d84222dec3a8c75b11ad3bc59435"
+    },
+    {
+      "path": "tianshu_ui/start-tianshu.bat",
+      "bytes": 2701,
+      "sha256": "0940c1dda48b552d43b8d490332b1a9acb8250f9844293d65c35e1def411dab4"
+    },
+    {
+      "path": "tianshu_ui/verify.js",
+      "bytes": 2951,
+      "sha256": "6bf490d6e67829756b056a51573f050d8d8941a86ba15c9c019452d9ea1f6ed7"
+    },
+    {
+      "path": "tianshu_ui/verify_backend_lifecycle.js",
+      "bytes": 22135,
+      "sha256": "e4e6ce680342f584f268624d4823c00e2904a0a533c234ebfa97ca60f6a5dfbe"
+    },
+    {
+      "path": "tianshu_ui/verify_batch.js",
+      "bytes": 13545,
+      "sha256": "889a9cf0be718b472122b127bdc881d68307ae3a3607e2803abe72c4605fc5b1"
+    },
+    {
+      "path": "tianshu_ui/verify_races.js",
+      "bytes": 22026,
+      "sha256": "10769dc25ca092c1c004e6d7e66a656683826e1a8af1bccc5d322a2386f363f2"
+    },
+    {
+      "path": "tianshu_ui/verify_render.js",
+      "bytes": 4920,
+      "sha256": "e2f6b833b2453b7234239b62dde5604f679d1db8f75618c5c4b93f2067709ac3"
+    }
+  ]
+}

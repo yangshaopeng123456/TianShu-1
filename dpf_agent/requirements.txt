@@ -1,0 +1,41 @@
+# Runtime dependencies. Validated on 2026-10-15 by codex.
+# Default com backend: locally registered OpenDSSEngine.DSS + pywin32.
+# Native calls run in a persistent, task-owned subprocess (stdlib multiprocessing);
+# no cloudpickle/psutil dependency is required. COM also runs from the CLI here.
+# dss-python bundles its own engine, but its native import crashes on this host;
+# it remains an alternative for compatible hosts, not an automatic COM fallback.
+# Optional cli comparison uses the separately installed OpenDSScmd.exe; CSV
+# export precision and continuous-snapshot behavior differ from production COM.
+
+dss-python>=0.15
+pydantic>=2.0
+fastapi>=0.110
+uvicorn[standard]>=0.29
+python-multipart>=0.0.9
+pandas>=2.0
+openpyxl>=3.1
+
+# ── COM 通道依赖（本项目默认后端 = `DPF_ENGINE_BACKEND=com`）────────────
+# ⚠️ **原来漏了这一条**，后果是：重装系统照旧文件装完，
+#    界面能启动、但一算就报"引擎不可用" —— 而 requirements.txt 看起来是齐的，
+#    极难自己查出来（2026-10-03 打包前核查才发现）。
+#    `win32com.client.Dispatch` 由 pywin32 提供，没有它 COM 通道根本起不来。
+#    注：`opendss_com_adapter.py:181` 还直接 `import pythoncom`，
+#    同一个包提供，一并装上。
+pywin32>=306 ; sys_platform == "win32"
+
+# ── 直接 import 却漏声明的三个（2026-10-04 依赖守卫查出）────────────────
+# ⚠️ 这三条都是**代码里真的 import 了**、而本文件漏了的。
+#    它们此前能跑，是因为 fastapi/pandas 把它们顺带装了 ——
+#    **靠传递依赖活着是隐患**：上游改版本就不在了。
+starlette>=0.27          # web/api.py 8 处 run_in_threadpool（异步里跑同步 IO 的唯一手段）
+requests>=2.31           # rag/power_rag_client.py 调 Power-RAG HTTP 接口
+numpy>=1.26              # web/case_converters.py 转换数值清洗
+
+# ── 判定依赖不能只看静态 import ────────────────────────────────────────
+# `dss-python` 看起来是死的（106 个 .py 里静态 `import dss` 零命中），
+# 但 `engines/opendss_adapter.py:205` 用 `importlib.import_module("dss")`
+# 按需加载（避免 Web 导入阶段触发原生库初始化），
+# `web/api.py:495` 还用 `find_spec("dss")` 做引擎健康探测。
+# **它删不得** —— 动了 `DPF_ENGINE_BACKEND=dss-python` 那条通道直接崩。
+# 改本文件前请跑依赖守卫（三面取证：静态 import / 动态加载 / 配置引用）。

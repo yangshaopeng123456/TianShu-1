@@ -1,0 +1,62 @@
+[
+  {
+    "id": "KB-ODSS-001",
+    "title": "OpenDSS CktElement.Powers 符号约定",
+    "source_type": "opendss_doc",
+    "source_ref": "OpenDSS 官方文档 / dss-python API",
+    "applicable_condition": "Result Extractor 提取支路/变压器功率时",
+    "forbidden_condition": "禁止将单相功率当作三相合计直接发布",
+    "recommendation": "Powers 返回按 [端子1相1P, 端子1相1Q, ...] 排列的复功率序列，流入元件为正；三相合计需按相求和",
+    "risk_note": "符号或口径错误会导致功率方向与平衡校验失败",
+    "version": "1.0",
+    "updated_at": "2026-08-29"
+  },
+  {
+    "id": "KB-ODSS-002",
+    "title": "kVBase 为相对地电压",
+    "source_type": "opendss_doc",
+    "source_ref": "OpenDSS Bus.kVBase",
+    "applicable_condition": "母线基准电压展示与电压 kV 换算",
+    "forbidden_condition": "多相母线不得直接把 kVBase 当线电压展示",
+    "recommendation": "多相母线基准线电压 = kVBase * sqrt(3)",
+    "risk_note": "混淆相/线电压会造成 1.732 倍展示错误",
+    "version": "1.0",
+    "updated_at": "2026-08-29"
+  },
+  {
+    "id": "KB-RULE-001",
+    "title": "converged 不等于运行安全",
+    "source_type": "expert_rule",
+    "source_ref": "设计文档 13.3 状态语义判据",
+    "applicable_condition": "报告解释与结论生成",
+    "forbidden_condition": "禁止把 non_converged 解释为‘电网不安全’，禁止把 converged 解释为‘运行安全’",
+    "recommendation": "求解状态、Verification、criteria 三类状态分离表述",
+    "risk_note": "状态混淆会产生错误专业结论",
+    "version": "1.0",
+    "updated_at": "2026-08-29"
+  },
+  {
+    "id": "KB-RULE-002",
+    "title": "not_assessed 不得显示为 0 或正常",
+    "source_type": "expert_rule",
+    "source_ref": "设计文档 13.4 发布门",
+    "applicable_condition": "渲染层与报告生成",
+    "forbidden_condition": "禁止用 0、空柱或‘正常/安全’替代 unavailable / not_assessed",
+    "recommendation": "使用显式状态标签，并在报告中说明未评估维度",
+    "risk_note": "缺失语义被掩盖会造成误判",
+    "version": "1.0",
+    "updated_at": "2026-08-29"
+  },
+  {
+    "id": "KB-MAP-001",
+    "title": "Canonical Result 字段映射与单位约定",
+    "source_type": "system_case",
+    "source_ref": "dpf_agent/domain/result_normalizer.py",
+    "applicable_condition": "Result Extractor 字段映射",
+    "forbidden_condition": "额定值不可用时禁止编造 loading 数值",
+    "recommendation": "电压 pu/kV、功率 kW/kvar（支路首端流出为正）、电流 A；额定值不可用时 loading=unavailable",
+    "risk_note": "口径不一致会破坏功率平衡复算",
+    "version": "1.0",
+    "updated_at": "2026-08-29"
+  }
+]

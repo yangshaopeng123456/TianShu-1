@@ -1,0 +1,17 @@
+! 4 节点小型径向算例（可人工复核）
+! 电源 12.66 kV → 4 个母线，3 条线路，3 个负荷
+Clear
+New Circuit.Case4 basekv=12.66 pu=1.00 phases=3 bus1=src
+~ MVAsc3=1000 MVAsc1=900
+
+New Line.L1 phases=3 bus1=src bus2=b2 r1=0.5 x1=0.3 r0=1.0 x0=0.6 normamps=400
+New Line.L2 phases=3 bus1=b2  bus2=b3 r1=0.4 x1=0.2 r0=0.8 x0=0.4 normamps=400
+New Line.L3 phases=3 bus1=b3  bus2=b4 r1=0.3 x1=0.2 r0=0.6 x0=0.4 normamps=400
+
+New Load.L2 bus1=b2 phases=3 kv=12.66 kw=300 kvar=150 model=1
+New Load.L3 bus1=b3 phases=3 kv=12.66 kw=200 kvar=100 model=1
+New Load.L4 bus1=b4 phases=3 kv=12.66 kw=100 kvar=50  model=1
+
+Set VoltageBases=[12.66]
+Calcvoltagebases
+Set controlmode=off

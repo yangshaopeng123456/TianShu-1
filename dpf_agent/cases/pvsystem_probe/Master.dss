@@ -1,0 +1,19 @@
+! Probe case: PVSystem only (no Generator, no Storage).
+! Purpose: determine whether the COM path counts PVSystem into gen_kw.
+! Expected if counted: load_kw ~ 1000 kW, gen_kw ~ 500 kW,
+!                      total_power_kw ~ 500 kW (before losses).
+Clear
+New Circuit.PVPROBE basekv=12.47 Isc3=10000 Isc1=8000 x1r1=10 x0r0=10
+
+New Linecode.LC1 nphases=3 units=km r1=0.2 x1=0.3 r0=0.6 x0=0.9 c1=10 c0=5
+New Line.L1 bus1=SourceBus bus2=Bus2 linecode=LC1 length=0.5 units=km
+
+New Load.LD1 phases=3 conn=wye bus1=Bus2 model=1 kv=12.47 kw=1000 kvar=300
+
+New PVSystem.PV_A phases=3 conn=wye bus1=Bus2 kv=12.47 pmpp=500 kva=600 irradiance=1
+
+Set VoltageBases=[12.47]
+CalcVoltageBases
+Set MaxIterations=100
+Set ControlMode=off
+Solve

@@ -1,0 +1,18 @@
+天枢一号 / Tianshu One
+Copyright 2026 杨绍鹏
+
+This source candidate is distributed under the Apache License, Version 2.0.
+The project license does not replace the licenses of third-party dependencies,
+third-party data, or third-party documentation. Identifiable upstream copyright
+and attribution notices remain with their respective owners.
+
+OpenDSS is developed by the Electric Power Research Institute, Inc. (EPRI).
+The EPRI OpenDSS engine is installed separately and is not included in this
+source candidate. DSS-Python is maintained by Paulo Meira and DSS-Python
+contributors. Electron is maintained by Electron contributors.
+
+Use of these names identifies interoperability and dependencies; it does not
+imply endorsement or certification by EPRI, IEEE, MATPOWER, or any contributor.
+
+See THIRD_PARTY_NOTICES.md for the source candidate's dependency references,
+retained factual knowledge summaries, and excluded external materials.

@@ -1,0 +1,35 @@
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+settings.json
+*credentials*.json
+*.pem
+*.key
+# Development assistants and editors
+.workbuddy/
+.codex/
+.vscode/
+.idea/
+# Dependencies, bytecode and packaging
+.venv/
+venv/
+node_modules/
+__pycache__/
+*.py[cod]
+build/
+dist/
+*.egg-info/
+# Runtime data and validation evidence
+tasks/
+outputs/
+chat_data/
+logs/
+artifacts/
+*.log
+*.sqlite*
+*.db
+*.db-wal
+*.db-shm
+*.tmp
+_*.txt

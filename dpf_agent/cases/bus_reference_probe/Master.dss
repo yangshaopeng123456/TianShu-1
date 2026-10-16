@@ -1,0 +1,14 @@
+! Probe: a component references a bus that does not exist, and NO voltage
+! bases are calculated, so the auto-created bus keeps kVBase = 0 (zero base).
+! This is the case the validator must reject: the result would be computed
+! against a missing voltage reference.
+!
+! Note: with "Set VoltageBases" + "CalcVoltageBases" OpenDSS backfills kVBase
+! (e.g. 12.47) and the case is then solvable - the validator correctly lets it
+! through. That variant is NOT what this probe tests.
+Clear
+New Circuit.BADREF basekv=12.47 Isc3=10000 Isc1=8000 x1r1=10 x0r0=10
+New Linecode.LC1 nphases=3 units=km r1=0.2 x1=0.3 r0=0.6 x0=0.9 c1=10 c0=5
+New Line.L1 bus1=SourceBus bus2=NOSUCHBUS linecode=LC1 length=0.5 units=km
+New Load.LD1 phases=3 conn=wye bus1=NOSUCHBUS model=1 kv=12.47 kw=1000 kvar=300
+Solve

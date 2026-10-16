@@ -1,0 +1,15 @@
+! Probe: Storage DISCHARGING. Purpose: does excluding Storage break power_balance?
+! Load 1000 kW. Storage discharging ~500 kW. No Generator, no PVSystem.
+! If Storage is excluded from both load_kw and gen_kw, the balance residual
+! will be ~500 kW -> residual_pu = 500/1000 = 0.5 >> tol 1e-3 -> FAIL.
+Clear
+New Circuit.STPROBE basekv=12.47 Isc3=10000 Isc1=8000 x1r1=10 x0r0=10
+New Linecode.LC1 nphases=3 units=km r1=0.2 x1=0.3 r0=0.6 x0=0.9 c1=10 c0=5
+New Line.L1 bus1=SourceBus bus2=Bus2 linecode=LC1 length=0.2 units=km
+New Load.LD1 phases=3 conn=wye bus1=Bus2 model=1 kv=12.47 kw=1000 kvar=300
+New Storage.ST1 phases=3 bus1=Bus2 kv=12.47 kWrated=500 kWhrated=2000 %stored=80 state=discharging pf=1 %discharge=100
+Set VoltageBases=[12.47]
+CalcVoltageBases
+Set MaxIterations=100
+Set ControlMode=off
+Solve

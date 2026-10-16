@@ -1,0 +1,20 @@
+! 含变压器 / 双电压等级算例：12.66 kV → 4.16 kV
+Clear
+New Circuit.CaseTX basekv=12.66 pu=1.00 phases=3 bus1=src
+~ MVAsc3=1000 MVAsc1=900
+
+New Line.L1 phases=3 bus1=src bus2=hv r1=0.3 x1=0.2 r0=0.6 x0=0.4 normamps=400
+
+New Transformer.T1 phases=3 windings=2 xhl=5.0
+~ wdg=1 bus=hv conn=wye kv=12.66 kva=2000 %r=0.5
+~ wdg=2 bus=lv conn=wye kv=4.16  kva=2000 %r=0.5
+
+New Line.L2 phases=3 bus1=lv bus2=lv2 r1=0.1 x1=0.05 r0=0.2 x0=0.1 normamps=300
+
+New Load.LHV bus1=hv  phases=3 kv=12.66 kw=200 kvar=100 model=1
+New Load.LV1 bus1=lv  phases=3 kv=4.16  kw=400 kvar=200 model=1
+New Load.LV2 bus1=lv2 phases=3 kv=4.16  kw=300 kvar=150 model=1
+
+Set VoltageBases=[12.66, 4.16]
+Calcvoltagebases
+Set controlmode=off

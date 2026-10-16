@@ -1,0 +1,10 @@
+! 故意缺依赖的算例：Redirect 指向不存在的文件
+! 用于验证 data_unavailable / validation_failed 失败语义（文档 17.2）
+Clear
+New Circuit.CaseBroken basekv=12.66 pu=1.00 phases=3 bus1=1
+~ MVAsc3=1000 MVAsc1=900
+
+Redirect LinesMissing.dss
+
+Set VoltageBases=[12.66]
+Calcvoltagebases
