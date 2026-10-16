@@ -1,6 +1,6 @@
 {
   "date": "2026-10-16",
-  "prepared_by": "codex",
+  "prepared_by": "yangshaopeng",
   "name": "Tianshu-1 source candidate",
   "manifest_excludes_itself": true,
   "files": [
@@ -21,8 +21,8 @@
     },
     {
       "path": "docs/使用说明.md",
-      "bytes": 6809,
-      "sha256": "c8cb5a45e13529e4c6a9d4f9ee4ca0606fa80da091b7c250b09e6ccd36a0539f"
+      "bytes": 6816,
+      "sha256": "69a8cf711a69f09dd412ab7fdb23f542d3dcaad8378aee19183f86edc1cc8ee1"
     },
     {
       "path": "dpf_agent/cases/bus_reference_probe/Master.dss",
@@ -496,8 +496,8 @@
     },
     {
       "path": "dpf_agent/dpf_agent/tests/test_conversion_fidelity.py",
-      "bytes": 21424,
-      "sha256": "9d0fe6a4695ed435c73d9c52987631536423c3c7247b6063caf9850ccece17ff"
+      "bytes": 21418,
+      "sha256": "b114c94a4153d39d57f0324b67fe155e6fcb92f91d983fd9d3aa3b3e2736d4da"
     },
     {
       "path": "dpf_agent/dpf_agent/tests/test_conversion_publication.py",
@@ -756,33 +756,33 @@
     },
     {
       "path": "dpf_agent/knowledge/README.md",
-      "bytes": 595,
-      "sha256": "96a3bebaea5b9af41b2096d27859c66dc7bbe7da7abad1abc3ed434d3bdc8a01"
+      "bytes": 602,
+      "sha256": "f05434151f90b4e262fc4dbf33f37b9c5a11ad8061ceb839de2772467c86a2b1"
     },
     {
       "path": "dpf_agent/README.md",
-      "bytes": 4790,
-      "sha256": "2458b6c5e95da5d94ef701d2c78440b6ad691a8cedb0d74decabcee6eff58382"
+      "bytes": 4797,
+      "sha256": "d3719a2ce1d31d159fa22d41215a6a4acadaa237e471769d62c1c763b85175d6"
     },
     {
       "path": "dpf_agent/requirements-com.txt",
-      "bytes": 300,
-      "sha256": "86990c4ad0c7d5aa8c725b40305d8ce496f3fa4579f0e1b9297955d8fa169c54"
+      "bytes": 311,
+      "sha256": "3ba86806c1e41597b8d8b61e59ab4575b6cd061dbcc38874ce05942f357aba6b"
     },
     {
       "path": "dpf_agent/requirements-windows-py313.lock.txt",
-      "bytes": 749,
-      "sha256": "ca34fe421e848cbd21c267cef0043ae049ed09eea5d8b7720a3eedbe88c7080b"
+      "bytes": 740,
+      "sha256": "28a26aa9624538ec0b2721dcc414c8e2d5e0b8776361e7a80e7ca261df59c6db"
     },
     {
       "path": "dpf_agent/requirements.txt",
-      "bytes": 2677,
-      "sha256": "1acefc1e6131dc29a6c0683d4487df3b07e2d5fea100035899e233dd7d3891da"
+      "bytes": 2668,
+      "sha256": "b7d71d77986661a080060b549db7da1ed04fdcc9be52f2dfb573a83770892d2b"
     },
     {
       "path": "examples/cases/README.md",
-      "bytes": 602,
-      "sha256": "ebdb27ddec7dc40b276ba209e7c857dbbfd4d799eb2ff735778f1d74db09f579"
+      "bytes": 609,
+      "sha256": "eade090083373882a5302232e791d0894d715e2e0e7f709af897dccb350e66cc"
     },
     {
       "path": "LICENSE",
@@ -796,18 +796,18 @@
     },
     {
       "path": "README.md",
-      "bytes": 6648,
-      "sha256": "5eb44a905c274fe46301c42dfb7ad8e32e86aff6b4fb710a90be012f7df84d0a"
+      "bytes": 6709,
+      "sha256": "13ead261a532dc8a357e690f6a9327c0bad3bb37e1fe230206f3a621334e8285"
     },
     {
       "path": "scripts/install-electron.py",
-      "bytes": 3500,
-      "sha256": "c3694e569b72f36784f86656a2cf0faf7a1c2181aa41e801db0fd42d87f78d51"
+      "bytes": 3493,
+      "sha256": "ca54672771f36eaed9d0a5f90a20070d612c3d15e8e2431017ead7b027e9a444"
     },
     {
       "path": "scripts/run-demo.ps1",
-      "bytes": 1154,
-      "sha256": "8ad87fce3a9efe215419bcf7b3db32ab5a09c61fc16a4a630beb7fd0257df0bb"
+      "bytes": 1165,
+      "sha256": "045dc519fdbd5a928fb5974c35b408a049d97044e4acff3033a25486b089f0c2"
     },
     {
       "path": "scripts/启动天枢一号.bat",
@@ -816,13 +816,13 @@
     },
     {
       "path": "SECURITY.md",
-      "bytes": 1080,
-      "sha256": "8923cc2218b078cd6f6ffe37c6b8f8f01ec4ef06a2f244dab9bf6e79fbbc6338"
+      "bytes": 1087,
+      "sha256": "655a172e5c83702142204a19c8b3bbbb94d2e518062e5c69e75f7694175e1b09"
     },
     {
       "path": "THIRD_PARTY_NOTICES.md",
-      "bytes": 9719,
-      "sha256": "c6c4ef072e04211426342603a23c9df45d7b958310346813b258dc3401fa2c9f"
+      "bytes": 9726,
+      "sha256": "cba4edc6ead02c39973d4107bb79681b7f2df24ab7e39bdcd3259bc6247d5cae"
     },
     {
       "path": "tianshu_ui/backend_lifecycle.js",
@@ -846,8 +846,8 @@
     },
     {
       "path": "tianshu_ui/package.json",
-      "bytes": 426,
-      "sha256": "59beb71592b73a426fc12ee8540b9294446cc9cc486b46cf7a946a3e6c7ffb1c"
+      "bytes": 438,
+      "sha256": "bc55fa139730933ab3606d5c2107d02a1118edb1c74394fd303cdf5217577eb0"
     },
     {
       "path": "tianshu_ui/preload.js",
@@ -856,8 +856,8 @@
     },
     {
       "path": "tianshu_ui/README.md",
-      "bytes": 4370,
-      "sha256": "624d1c58e235442e058320b585767fd2d96c11ce508d3f150599bc3f1ba92d60"
+      "bytes": 4377,
+      "sha256": "a91817d74b1a3ed6ea2555170e70f1e0cc63e0a2d1e7e3b6dfb5c0ad0784e976"
     },
     {
       "path": "tianshu_ui/renderer/app.js",
@@ -876,8 +876,8 @@
     },
     {
       "path": "tianshu_ui/setup-electron.js",
-      "bytes": 726,
-      "sha256": "ac0f35bc36d1f357e07c1af07493f89e1f48d84222dec3a8c75b11ad3bc59435"
+      "bytes": 720,
+      "sha256": "54b05a6386f50556142dc754ca99edd1c2dc859d33a5c377f6f4a0fd1ce8e216"
     },
     {
       "path": "tianshu_ui/start-tianshu.bat",

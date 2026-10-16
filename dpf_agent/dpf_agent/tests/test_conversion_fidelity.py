@@ -1,4 +1,4 @@
-"""2026-10-15 codex: fidelity contracts, independent electrical equations, no engine.
+"""2026-10-15: fidelity contracts, independent electrical equations, no engine.
 
 Real COM port-matrix evidence is a separate reproducible probe, not mocked here.
 """

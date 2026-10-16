@@ -1,4 +1,4 @@
-# Date: 2026-10-16. Author: codex. No model service or API key required.
+# Date: 2026-10-16. Maintainer: yangshaopeng. No model service or API key required.
 $ErrorActionPreference = 'Stop'
 $projectDir = Split-Path -Parent $PSScriptRoot
 $backendDir = Join-Path $projectDir 'dpf_agent'

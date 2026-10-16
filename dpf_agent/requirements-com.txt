@@ -1,5 +1,5 @@
 # Windows COM backend. Install OpenDSS separately; no dss-python native import.
-# Date: 2026-10-16. Author: codex.
+# Date: 2026-10-16. Maintainer: yangshaopeng.
 pydantic>=2.0
 fastapi>=0.110
 uvicorn[standard]>=0.29

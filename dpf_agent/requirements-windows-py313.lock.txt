@@ -1,5 +1,5 @@
 # Windows x64 / CPython 3.13.14, COM backend
-# Installed and locked in a new virtual environment on 2026-10-16 by codex.
+# Installed and locked in a new virtual environment on 2026-10-16.
 # Does not bundle OpenDSS or dss-python.
 annotated-doc==0.0.5
 annotated-types==0.8.0

@@ -1,4 +1,4 @@
-// 2026-10-16 codex: invoke the project's Python installer without shell quoting.
+// 2026-10-16: invoke the project's Python installer without shell quoting.
 const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');

@@ -1,6 +1,6 @@
 """Install the pinned Windows x64 Electron runtime with SHA256 verification.
 
-2026-10-16, codex. Uses Python's standard HTTPS/system-proxy support.
+2026-10-16. Uses Python's standard HTTPS/system-proxy support.
 Only the local npm package's version and checksums are trusted; no engine is
 bundled in this source repository. Run after npm ci and backend venv setup.
 """

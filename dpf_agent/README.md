@@ -66,4 +66,4 @@ $env:DPF_POWER_RAG_ENABLED = '0'
 
 完整的使用、上传及模型配置见[使用说明](../docs/使用说明.md)。
 
-文档日期：2026-10-16；整理：codex。
+文档日期：2026-10-16；整理：yangshaopeng。

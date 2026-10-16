@@ -1,4 +1,4 @@
-# Runtime dependencies. Validated on 2026-10-15 by codex.
+# Runtime dependencies. Validated on 2026-10-15.
 # Default com backend: locally registered OpenDSSEngine.DSS + pywin32.
 # Native calls run in a persistent, task-owned subprocess (stdlib multiprocessing);
 # no cloudpickle/psutil dependency is required. COM also runs from the CLI here.

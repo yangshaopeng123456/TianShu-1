@@ -56,4 +56,4 @@ node verify_batch.js
 
 更多操作见[使用说明](../docs/使用说明.md)。
 
-文档日期：2026-10-16；整理：codex。
+文档日期：2026-10-16；整理：yangshaopeng。
