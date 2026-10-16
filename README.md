@@ -2,6 +2,8 @@
 
 作者与维护者：**yangshaopeng（杨绍鹏）**
 
+当前版本缺陷见[已知缺陷说明](KNOWN_ISSUES.md)。
+
 配电网潮流计算智能体：Python/FastAPI 后端、Electron 桌面界面和 OpenDSS 求解引擎。支持自然语言任务、算例上传、批量计算、任务取消、历史查询，以及带验证结果的 HTML/Markdown/JSON/CSV 报告。
 
 本源码版以 **Windows x64、Python 3.13、Node.js 24、OpenDSS COM** 为运行基线。本轮实际使用 Node.js **24.19.0**，桌面运行时锁定为 Electron **44.8.0**。模型服务可选；建议先完成下面的离线示例，再配置模型。
