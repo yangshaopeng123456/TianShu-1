@@ -1,0 +1,97 @@
+{
+  "schema_version": "tianzhi-grid/1.0",
+  "frequency_hz": 50,
+  "voltage_bases_kv": [
+    12.47
+  ],
+  "buses": [
+    {
+      "id": "source",
+      "nodes": [
+        1,
+        2,
+        3
+      ]
+    },
+    {
+      "id": "loadbus",
+      "nodes": [
+        1,
+        2,
+        3
+      ]
+    }
+  ],
+  "objects": [
+    {
+      "kind": "circuit",
+      "id": "example",
+      "properties": {
+        "bus1": "source.1.2.3",
+        "phases": 3,
+        "basekv": 12.47,
+        "pu": 1,
+        "r1": 0.01,
+        "x1": 0.02,
+        "r0": 0.01,
+        "x0": 0.02
+      }
+    },
+    {
+      "kind": "line",
+      "id": "l1",
+      "properties": {
+        "phases": 3,
+        "bus1": "source.1.2.3",
+        "bus2": "loadbus.1.2.3",
+        "length": 1,
+        "units": "km",
+        "r1": 0.1,
+        "x1": 0.1,
+        "r0": 0.3,
+        "x0": 0.3,
+        "c1": 0,
+        "c0": 0
+      }
+    },
+    {
+      "kind": "load",
+      "id": "a",
+      "properties": {
+        "phases": 1,
+        "bus1": "loadbus.1.0",
+        "conn": "wye",
+        "kv": 7.199557856794634,
+        "kw": 20,
+        "kvar": 5,
+        "model": 1
+      }
+    },
+    {
+      "kind": "load",
+      "id": "b",
+      "properties": {
+        "phases": 1,
+        "bus1": "loadbus.2.0",
+        "conn": "wye",
+        "kv": 7.199557856794634,
+        "kw": 10,
+        "kvar": 3,
+        "model": 1
+      }
+    },
+    {
+      "kind": "load",
+      "id": "c",
+      "properties": {
+        "phases": 1,
+        "bus1": "loadbus.3.0",
+        "conn": "wye",
+        "kv": 7.199557856794634,
+        "kw": 5,
+        "kvar": 1,
+        "model": 1
+      }
+    }
+  ]
+}

@@ -91,3 +91,5 @@ if not "%EL_ERROR%"=="0" (
     echo.
     pause
 )
+
+exit /b %EL_ERROR%

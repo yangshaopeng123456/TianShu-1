@@ -50,9 +50,9 @@
           <li><code>F5</code> / <code>Ctrl + R</code>（整页重载）— 真正重跑一遍渲染层，
               界面卡死时才用。后端进程不重启，聊天记录不丢，但未发送的输入草稿会清。</li>
         </ul>
-        <p>引擎只在<b>首次冷启动</b>时加载一次（20~40s）；之后无论哪种刷新都不会再加载。</p>
+        <p>刷新界面不重启后端；引擎由任务流程按需加载。</p>
         <h3>知识库</h3>
-        <p>在「<b>配置 → 知识与经验</b>」可看到本地知识库与 Power-RAG 的真实状态；右上角 <b>⟳ 重建索引</b>按钮会在新增/修改 <code>knowledge/</code> 里的文档后重建 BM25 索引。</p>
+        <p>在「<b>配置 → 知识库</b>」可看到本地知识库与 Power-RAG 的真实状态；右上角 <b>⟳ 重建索引</b>按钮会在新增/修改 <code>knowledge/</code> 里的文档后重建 BM25 索引。</p>
         <h3>聊天知识型问题</h3>
         <p>含「国标 / 标准 / 限值 / 规范 / GB/T / 原理 / 是什么」的问题会优先走知识库，不会被当作潮流计算去跑。计算命令（如「计算 IEEE33」）仍会正常执行潮流。</p>
         <h3>快捷键</h3>
@@ -117,7 +117,6 @@
     <!-- 主内容 -->
     <main id="content">
       <div id="page-body"></div>
-      <div id="savebar" class="hidden"></div>
     </main>
   </div>
 
@@ -127,7 +126,7 @@
       <div class="boot-spinner"></div>
       <div class="boot-title">天枢一号</div>
       <div class="boot-msg" id="boot-msg">正在启动后端服务…</div>
-      <div class="boot-hint">首次启动需要 20~40 秒（加载 OpenDSS 引擎），请勿关闭窗口</div>
+      <div class="boot-hint">正在等待本机后端就绪，请勿关闭窗口</div>
     </div>
   </div>
 

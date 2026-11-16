@@ -115,7 +115,7 @@ def cmd_web(args: argparse.Namespace) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        prog="dpf_agent", description="天枢一号 V1.3 — 配电网潮流计算智能体（CLI-first）"
+        prog="dpf_agent", description="天智五号 V1.3 — 配电网潮流计算智能体（CLI-first）"
     )
     parser.add_argument("--workspace", help="任务工作目录根（默认 ./tasks）")
     parser.add_argument("--outputs", help="输出目录根（默认 ./outputs）")

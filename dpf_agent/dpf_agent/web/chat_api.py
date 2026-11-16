@@ -64,7 +64,7 @@ def _looks_like_compute_command(content: str) -> bool:
     c = (content or "").lower().strip()
     if not c:
         return False
-    has_case = any(w in c for w in _CASE_NAME_HINTS)
+    has_case = any(w in c for w in _CASE_NAME_HINTS) or _extract_mentioned_case_name(c) is not None
     has_action = any(w in c for w in _ACTION_HINTS)
     return has_case and has_action
 
@@ -1346,6 +1346,9 @@ def _is_history_query(content: str, ctx: dict[str, Any]) -> bool:
     # 只要有任意一次成功任务即可；最近一次任务失败不影响查询历史产物。
     if not (ctx.get("last_success") or ctx.get("last_success_task_id")):
         return False
+    # 点名计算的新输入优先，不能因 pvsystem/storage 等名字含设备词而读旧结果。
+    if _looks_like_compute_command(content):
+        return False
     # 网络画像、设备统计、拓扑、保真度等均是已生成产物的只读查询。
     if any(w in lower for w in _STRUCTURE_QUERY_KEYWORDS):
         if not any(w in lower for w in _CONTEXT_RERUN_KEYWORDS) and not _is_parameter_change(content):
@@ -2040,38 +2043,46 @@ def _execute_batch_item(item, on_started):
 
 
 def _extract_case_name_from_text(content: str) -> str | None:
-    """从用户消息中提取内置算例名，如 ieee33、case4。"""
-    lower = content.lower()
-    for name in _BUILTIN_CASE_NAMES:
-        if name in lower:
-            return name
-    # 匹配 "ieee 33" -> "ieee33"
-    if "ieee" in lower:
-        import re
-        m = re.search(r"ieee\s*([0-9]+)", lower)
-        if m:
-            return f"ieee{m.group(1)}"
-    return None
+    """提取真实可用的完整内置名；中文邻接不影响 ASCII 身份边界。"""
+    lower = _normalize_case_spelling(content)
+    names = _available_builtin_case_names()
+    if not names:
+        return None
+    pattern = "|".join(re.escape(name) for name in names)
+    match = re.search(r"(?<![a-z0-9_.-])(?:" + pattern + r")(?![a-z0-9_.-])", lower)
+    return match.group(0) if match else None
 
 
-def _extract_mentioned_case_name(content: str) -> str | None:
+def _normalize_case_spelling(content: str) -> str:
+    # 只规范原有空格别名；下划线、后缀和完整文件名均属于算例身份。
+    return re.sub(r"(?<![a-z0-9_.-])(ieee|case)\s+(?=[0-9])", r"\1",
+                  (content or "").lower())
+
+
+def _extract_mentioned_case_name(content: str, session_id: str | None = None) -> str | None:
     """检测用户是否显式提到一个算例名（包括可能不存在的自定义名）。"""
-    import re
-    lower = content.lower()
+    lower = _normalize_case_spelling(content)
     # 明确带扩展名的上传文件优先于stem/内置名，区分case.csv、case.json等独立模型。
-    filename = re.search(r"([a-z0-9_][a-z0-9_.-]*\.(?:xlsx|csv|json|m|zip|dss))(?![a-z0-9_.-])", lower)
+    filename = re.search(r"(?<![a-z0-9_.-])([a-z0-9_][a-z0-9_.-]*\.(?:xlsx|csv|json|m|zip|dss))(?![a-z0-9_.-])", lower)
     if filename:
         return filename.group(1)
-    # 内置算例
-    builtin = _extract_case_name_from_text(content)
-    if builtin:
-        return builtin
-    # 自定义算例：case11_structured_hard_v2 / case_11_x / case17...
-    # 注意 case 后可能紧跟数字（无分隔符），旧正则 `case[_\s]+` 要求必须有
-    # 分隔符所以匹配不到 —— 导致用户点名的算例被整体忽略、悄悄沿用上一次。
-    m = re.search(r"case[_\s]*([0-9]+[a-z0-9_]*)", lower)
-    if m:
-        return f"case{m.group(1)}"
+    # 先读完整 token，再判是否可用，禁止 case40/case_tx_alt 截断成内置前缀。
+    candidates = [(match.start(), match.group(0).rstrip(".")) for match in re.finditer(
+        r"(?<![a-z0-9_.-])(?:case[a-z0-9_][a-z0-9_.-]*|ieee[0-9][a-z0-9_.-]*)(?![a-z0-9_.-])",
+        lower)]
+    names = list(_BUILTIN_CASE_NAMES)
+    if session_id:
+        names.extend(candidate["id"] for candidate in _case_candidates(session_id))
+    for name in names:
+        match = re.search(r"(?<![a-z0-9_.-])" + re.escape(name.lower()) + r"(?![a-z0-9_.-])", lower)
+        if match:
+            candidates.append((match.start(), name.lower()))
+    if candidates:
+        return min(candidates, key=lambda item: item[0])[1]
+    # 无 case 前缀的显式自定义名字也必须找得到，不能静默沿用历史模型。
+    match = re.search(r"(?:计算|求解|重算|复算|运行|算例|使用|用)\s*[`\"“]?([a-z][a-z0-9_.-]*)", lower)
+    if match:
+        return match.group(1).rstrip(".")
     return None
 
 
@@ -2280,8 +2291,8 @@ def _resolve_case_name_to_upload(name: str, session_id: str) -> str | None:
 
     返回 None 表示"我解析不了，交给下游按原逻辑处理"。
     """
-    # 内置算例 / 已经是路径的情况不干预
-    if not name or _is_known_builtin_case(name):
+    # 完整同名上传优先；不能因它也叫 case4 就跳过上传身份。
+    if not name:
         return None
     if os.path.isfile(name) or os.sep in name or "/" in name:
         return None
@@ -2305,59 +2316,57 @@ def _resolve_case_name_to_upload(name: str, session_id: str) -> str | None:
     others.sort(key=lambda p: os.path.getmtime(p), reverse=True)
     search_dirs.extend(others)
 
-    # 先做精确同名，再做前缀/包含匹配
-    for exact in (True, False):
-        for root_dir in search_dirs:
-            try:
-                entries = _uploaded_model_entries(root_dir)
-            except OSError:
+    # 只接受完整文件名或完整 stem；包含/前缀不是同一个算例。
+    for root_dir in search_dirs:
+        try:
+            entries = _uploaded_model_entries(root_dir)
+        except OSError:
+            continue
+        matches: dict[str, tuple[str, str]] = {}
+        for entry in entries:
+            full = os.path.join(root_dir, entry)
+            if os.path.isdir(full):
+                master = _find_master_in(full)
+            elif os.path.isfile(full) and full.lower().endswith(".dss"):
+                master = full
+            else:
                 continue
-            matches: dict[str, tuple[str, str]] = {}
-            for entry in entries:
-                full = os.path.join(root_dir, entry)
-                if os.path.isdir(full):
-                    master = _find_master_in(full)
-                elif os.path.isfile(full) and full.lower().endswith(".dss"):
-                    master = full
-                else:
-                    continue
-                if not master:
-                    continue
-                meta = conversion_cache.read_meta(os.path.dirname(master)) or {}
-                source = str(meta.get("source") or "")
-                source_name = os.path.basename(source)
-                basename = os.path.basename(entry)
-                names = {basename.lower(), os.path.splitext(basename)[0].lower()}
-                if source_name:
-                    names.update((source_name.lower(), os.path.splitext(source_name)[0].lower()))
-                source_kind = meta.get("source_kind")
-                dependencies = meta.get("source_dependencies") or []
-                if not source_kind and source and os.path.exists(source):
-                    # 旧目录按源文件推断组件束，和新的canonical根按同一身份去重。
-                    state = conversion_cache._source_state(source)
-                    source_kind, dependencies = state["source_kind"], state["source_dependencies"]
-                if source_kind in {"csv_bundle", "csv_directory"}:
-                    for dependency in dependencies:
-                        component = os.path.basename(str(dependency.get("path") or "")).lower()
-                        if component:
-                            names.update((component, os.path.splitext(component)[0]))
-                hit = key in names if exact else any(key in alias or alias in key for alias in names if alias)
-                if not hit:
-                    continue
-                identity_source = os.path.dirname(source) if source_kind == "csv_bundle" else source
-                identity = os.path.normcase(os.path.abspath(identity_source or master))
-                if source_kind in {"csv_bundle", "csv_directory"}:
-                    identity = "csv-bundle:" + identity
-                matches.setdefault(identity, (master, source_name or basename))
-            if len(matches) > 1:
-                labels = "、".join(label for _master, label in matches.values())
-                raise CaseProductRejected(status_code=422, detail=(
-                    f"算例名 {name} 对应多个已上传模型：{labels}。"
-                    "请带上完整文件名和扩展名指定要计算的算例。"
-                ))
-            if matches:
-                full, _label = next(iter(matches.values()))
-                return _fresh_case_master(full)
+            if not master:
+                continue
+            meta = conversion_cache.read_meta(os.path.dirname(master)) or {}
+            source = str(meta.get("source") or "")
+            source_name = os.path.basename(source)
+            basename = os.path.basename(entry)
+            names = {basename.lower(), os.path.splitext(basename)[0].lower()}
+            if source_name:
+                names.update((source_name.lower(), os.path.splitext(source_name)[0].lower()))
+            source_kind = meta.get("source_kind")
+            dependencies = meta.get("source_dependencies") or []
+            if not source_kind and source and os.path.exists(source):
+                # 旧目录按源文件推断组件束，和新的canonical根按同一身份去重。
+                state = conversion_cache._source_state(source)
+                source_kind, dependencies = state["source_kind"], state["source_dependencies"]
+            if source_kind in {"csv_bundle", "csv_directory"}:
+                for dependency in dependencies:
+                    component = os.path.basename(str(dependency.get("path") or "")).lower()
+                    if component:
+                        names.update((component, os.path.splitext(component)[0]))
+            if key not in names:
+                continue
+            identity_source = os.path.dirname(source) if source_kind == "csv_bundle" else source
+            identity = os.path.normcase(os.path.abspath(identity_source or master))
+            if source_kind in {"csv_bundle", "csv_directory"}:
+                identity = "csv-bundle:" + identity
+            matches.setdefault(identity, (master, source_name or basename))
+        if len(matches) > 1:
+            labels = "、".join(label for _master, label in matches.values())
+            raise CaseProductRejected(status_code=422, detail=(
+                f"算例名 {name} 对应多个已上传模型：{labels}。"
+                "请带上完整文件名和扩展名指定要计算的算例。"
+            ))
+        if matches:
+            full, _label = next(iter(matches.values()))
+            return _fresh_case_master(full)
     return None
 
 
@@ -2407,16 +2416,30 @@ def _list_uploaded_case_names(session_id: str, limit: int = 12) -> list[str]:
 #: 与 `_is_known_builtin_case` 两处硬编码列表里 —— 一旦加了新内置算例而漏改一处，
 #: 就会出现"提取得到但判为未知名"这类自相矛盾的路径。现在统一从这里取。
 _BUILTIN_CASE_NAMES: tuple[str, ...] = (
-    "case4", "case_tx", "case_nonconv", "case_broken", "bus_reference_probe",
-    "pvsystem_probe", "storage_discharge_probe",
+    "ieee33", "case4", "case_tx", "case_nonconv", "case_broken",
+    "bus_reference_probe", "pvsystem_probe", "storage_discharge_probe",
 )
 
 
 def _is_known_builtin_case(name: str) -> bool:
     """判断算例名是否为内置可用算例。"""
-    return name in _BUILTIN_CASE_NAMES and os.path.isfile(
-        os.path.join(AgentConfig().cases_root, name, "Master.dss")
-    )
+    key = (name or "").strip().lower()
+    return key in _BUILTIN_CASE_NAMES and os.path.isfile(
+        os.path.join(AgentConfig().cases_root, key, "Master.dss"))
+
+
+def _available_builtin_case_names() -> tuple[str, ...]:
+    return tuple(name for name in _BUILTIN_CASE_NAMES if _is_known_builtin_case(name))
+
+
+def _default_builtin_case() -> str | None:
+    """开发版优先 IEEE33；公开版无 IEEE 时使用真实存在的 case4。"""
+    return next(iter(_available_builtin_case_names()), None)
+
+
+def _builtin_example() -> str:
+    name = _default_builtin_case()
+    return f"你可以说“计算 {name}”使用内置算例，或上传算例文件。" if name else "请上传自己的算例文件。"
 
 
 def _case_candidates(session_id: str) -> list[dict[str, str]]:
@@ -2424,8 +2447,7 @@ def _case_candidates(session_id: str) -> list[dict[str, str]]:
 
     ⚠️ 这里放进去的每一个名字，模型都可能原样回给用户。所以只准放**真的能算**的：
     放一个不存在的名字进去，模型就会把它当成"可用算例"推荐出来，
-    比不追问更糟。因此三类来源都要先验证文件确实存在（内置名除外，它由
-    `cases_root` 解析）。
+    比不追问更糟。因此三类来源都要先验证文件确实存在。
     """
     out: list[dict[str, str]] = []
     seen: set[str] = set()
@@ -2438,9 +2460,8 @@ def _case_candidates(session_id: str) -> list[dict[str, str]]:
         out.append({"id": n, "kind": kind, "hint": hint})
 
     # 1) 内置算例（与 _is_known_builtin_case 同源，避免两处白名单漂移）
-    for n in _BUILTIN_CASE_NAMES:
-        if _is_known_builtin_case(n):
-            _add(n, "builtin", "内置算例")
+    for n in _available_builtin_case_names():
+        _add(n, "builtin", "内置算例")
 
     # 2) cases_root 下真实存在 Master.dss 的目录（用户可能自己放进去的算例）
     try:
@@ -2836,16 +2857,16 @@ def _casual_reply(content: str, session: store.ChatSession | None = None) -> str
     if any(w in lower for w in ["你好", "您好", "hello", "hi"]):
         if has_history:
             return "又见面了，继续聊配电网潮流吗？"
-        return "你好！我是天枢一号。你可以让我计算内置合成算例（如 case4），或者上传自己的 DSS 算例文件/zip 压缩包。"
+        return "你好！我是天枢一号。" + _builtin_example()
     if "谢谢" in lower or "谢了" in lower:
         return "不客气，有问题随时叫我。"
     if "再见" in lower or "拜拜" in lower:
         return "再见！需要时再打开页面继续聊。"
     if "天气" in lower or "吃饭" in lower or "几点" in lower:
-        return "这个我暂时回答不了。我只会做配电网潮流计算，你可以说“计算 IEEE33”或上传算例文件。"
+        return "这个我暂时回答不了。我只会做配电网潮流计算。" + _builtin_example()
     if has_history:
         return "没太懂你的意思。需要计算哪个算例，或者上传 DSS 文件，我直接帮你跑。"
-    return "我不太明白你的意思。你可以直接说“计算 IEEE33 配电网”或上传算例文件，我会帮你跑潮流并返回报告。"
+    return "我不太明白你的意思。" + _builtin_example()
 
 
 class CreateSessionRequest(BaseModel):
@@ -3184,7 +3205,7 @@ def send_message(
             "- CSV 算例：`*.csv`（含 type 列或 bus.csv + line.csv）\n"
             "- JSON 算例：`*.json`\n"
             "- MATPOWER 算例：`*.m`\n\n"
-            "你也可以直接说“计算 IEEE33”使用内置算例。"
+            + _builtin_example()
         )
         assistant_msg = store.add_message(session_id, "assistant", reply)
         if session.title == "新聊天":
@@ -3230,7 +3251,7 @@ def send_message(
     # 系统把**参考文件名**当成了点名算例，回「算例 case35bus..._result 找不到」——
     # 上传的算例被完全忽略。附件是本轮唯一的计算依据，它的优先级高于正文里的
     # 任何文件名（正文提到别的文件，通常是在说明"别用它"或"拿它做对照"）。
-    mentioned_case = None if attachments else _extract_mentioned_case_name(content)
+    mentioned_case = None if attachments else _extract_mentioned_case_name(content, session_id)
     if mentioned_case and not _is_known_builtin_case(mentioned_case):
         # ⚠️ 不能只按"内置白名单"拒绝。用户之前上传过的自定义算例
         # （case17_structured_hard_v3 等）同样合法，这里会误杀——必须对
@@ -3254,9 +3275,14 @@ def send_message(
     # 确定本次使用的 case_ref：新上传附件优先，其次才继承历史算例。
     # 不能先查 last_attachments，否则上传新算例后会被错误绑定到旧算例。
     try:
-        case_ref = _extract_case_ref(session_id, attachments)
-        if not case_ref:
-            case_ref = _extract_case_ref(session_id, last_attachments)
+        case_ref = _extract_case_ref(session_id, attachments) if attachments else None
+        if not case_ref and not attachments:
+            # 最近点名计算的任务可能与较早的附件不同，不能扫描上传目录换回旧模型。
+            case_ref = ctx.get("last_task_case_ref")
+            if case_ref and os.path.isfile(case_ref):
+                case_ref = _fresh_case_master(case_ref)
+            if not case_ref and last_attachments:
+                case_ref = _extract_case_ref(session_id, last_attachments)
     except CaseProductRejected as exc:
         return _reject_reply(exc)
 
@@ -3269,7 +3295,7 @@ def send_message(
     # 沿用上一次的算例 —— 表面 success，实则是答非所问。
     # ⚠️ 与上面同理：**本轮上传了附件时，正文里的文件名不算点名**。
     # 判据与理由见上一处注释（实测：把"参考结果文件"当成了要算的算例）。
-    named_case = None if attachments else (_extract_mentioned_case_name(content) or explicit_case)
+    named_case = None if attachments else (_extract_mentioned_case_name(content, session_id) or explicit_case)
 
     if named_case:
         try:
@@ -3278,9 +3304,7 @@ def send_message(
             return _reject_reply(exc)
         if resolved:
             case_ref = resolved
-        elif os.path.isdir(os.path.join(store.UPLOADS_DIR, session_id, named_case)) or os.path.isfile(named_case):
-            case_ref = case_ref
-        elif explicit_case and _is_known_builtin_case(named_case):
+        elif _is_known_builtin_case(named_case):
             # 内置算例交给 cases_root 正常解析
             case_ref = named_case
         else:
@@ -3326,6 +3350,11 @@ def send_message(
                 output_formats=output_formats,
             )
 
+    default_case = _default_builtin_case() if not case_ref else None
+    if not case_ref and not default_case:
+        assistant_msg = store.add_message(session_id, "assistant", "本机没有可用的内置算例，请先上传要计算的算例文件。")
+        return JSONResponse({"user_message": user_msg.to_dict(), "assistant_message": assistant_msg.to_dict()})
+
     # 生成系统运行消息（占位，后续更新结果）
     assistant_msg = store.add_message(
         session_id, "assistant", "正在理解任务并执行潮流计算，请稍候..."
@@ -3333,7 +3362,7 @@ def send_message(
 
     # 执行任务
     try:
-        effective_case_ref = case_ref or "case4"  # 公开版默认使用自建合成算例
+        effective_case_ref = case_ref or default_case
         # 回复前缀（只在成功时拼接，与既有行为一致）。执行体与批量路径共用。
         context_note = ""
         if contextual_intent:
@@ -3342,7 +3371,7 @@ def send_message(
             context_note = "我联系了前面的对话，沿用上次的算例继续计算。\n\n"
         default_note = ""
         if not case_ref and not ctx.get("last_task_case_ref"):
-            default_note = "你未指定算例，我默认使用内置合成算例 `case4` 进行计算。\n\n"
+            default_note = f"你未指定算例，我默认使用内置 `{effective_case_ref}` 进行计算。\n\n"
         solver_note = ""
         _sc = _parse_solver_config_from_text(content)
         if _sc and (_sc.max_iterations is not None or _sc.tolerance is not None):

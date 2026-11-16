@@ -77,6 +77,9 @@ class TransformerResult(BaseModel):
 
 
 class SystemSummary(BaseModel):
+    # Modern COM: complete native passive-PD all-terminal P/Q, frozen before
+    # fidelity mapping. None is the explicit legacy contract, not measured zero.
+    passive_power_boundary: dict | None = None
     # 总负荷：由**负荷元件端子1有功之和**得到，忠实反映负荷自身消耗。
     # 曾用「源侧供电 − 网损」倒推，那实际是**净负荷**，含 PV/发电时等于
     # 负荷 − 发电，数值可正可负（实测出现过 −57332 kW），不能冠以"总负荷"。

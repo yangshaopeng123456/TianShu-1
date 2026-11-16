@@ -28,6 +28,10 @@ from typing import Any, Callable
 from ..schemas.enums import ErrorCode, ResultScope
 from ..schemas.solver import OpenDSSSolverProfile
 from .circuit_inventory import CircuitInventory, collect_circuit_inventory
+from .terminal_observations import (
+    collect_bus_observation, collect_terminal_data, collect_frequency_context,
+    configure_registry_isolation, read_engine_option,
+)
 from .circuit_validation import (
     CircuitObservation,
     normalize_bus_name,
@@ -49,24 +53,11 @@ logger = logging.getLogger(__name__)
 
 
 def _transformer_endpoints_from_source(case_workspace: str) -> dict[str, tuple[str, ...]]:
-    """从任务副本的源 `.dss` 解析变压器端点。
+    """Legacy source-only lookup, retained for compatibility with old tooling.
 
-    ⚠️ 为什么要绕开 COM（真机 case31 实测，踩了两次）：
-    第一次只加 `bus1/bus2` 字段但仍读 `ce.BusNames` → 真机 16 台变压器端点全空；
-    第二次加 `BusNodes` / `trs.BusNodes` / `ce.BusNodes` 三级兜底 → **仍然全空**，
-    而同批线路 264 条端点全部正常。可见不是 `BusNames` 机制坏了，
-    而是 `windings=2` 的多绕组元件在 `Transformers.First/Next` 迭代态下
-    不给出可用的两端子。
-
-    所以端点必须从**源文件**取：`New Transformer.X ... buses=[A B]` 就在定义行上。
-    复用 `DssSourceFacts`（CLI 通道一直在用同一份解析）—— **不重复实现一套 DSS 解析**，
-    否则两条通道的端点迟早漂移。
-
-    解析失败 / 目录不存在 → 返回空 dict，由下游判据明说"数据不足"，不猜、不编。
-
-    ⚠️ 留一行诊断日志：这个函数**静默失败过一次**（真机端点全空而
-    `from_bus` 字段已存在，说明调用到了但没取到值）。没有日志时只能靠
-    反复重跑真机来二分定位，代价极高。
+    Copyright (c) yangshaopeng. The COM collector no longer calls this helper:
+    terminal metadata comes from an explicitly selected, identity-checked
+    ActiveCktElement. Source text cannot replace observed NodeOrder/BusNames.
     """
     if not case_workspace or not os.path.isdir(case_workspace):
         logger.warning(
@@ -172,6 +163,8 @@ class _ComWorker:
         """（重新）创建队列与工作线程。调用方需自行持有 self._lock。"""
         self._req = queue.Queue()
         self._init_error = None
+        self._engine_settings = None
+        self._engine_identity = None
         self._thread = threading.Thread(
             target=self._loop,
             name=f"opendss-com-worker-{self._generation}",
@@ -191,9 +184,11 @@ class _ComWorker:
             # those wait for a desktop click until the parent kills the worker.
             # Surface Error.Number/Description instead, within the same task.
             engine.AllowForms = False
+            engine_settings = configure_registry_isolation(engine)
             init_error: Exception | None = None
         except Exception as exc:
             engine, init_error = None, exc
+            engine_settings = None
         # 注意：init_error 只写入"本线程自己那一代"的槽位。
         # 不能直接写 self._init_error——重建后该字段属于新线程，
         # 旧线程若延迟写回会污染新代的诊断信息（竞态）。
@@ -201,6 +196,8 @@ class _ComWorker:
         with self._lock:
             if self._req is req:
                 self._init_error = init_error
+                self._engine_settings = engine_settings
+                self._engine_identity = id(engine) if engine is not None else None
         while True:
             fn, box = req.get()
             try:
@@ -300,6 +297,12 @@ class OpenDSSComAdapter(OpenDSSAdapter):
         """
         return self._worker.call(collect_circuit_inventory, self.com_quick_timeout_s)
 
+    def collect_device_connections(self):
+        """Read actual device parameters in the owning COM thread only."""
+        from .device_connections import collect_device_connections
+        return self._worker.call(lambda eng:collect_device_connections(eng,
+            evidence_dir=getattr(self,"_native_observation_dir",None)), self.com_quick_timeout_s)
+
     # ------------------------------------------------------------------ health
     def health(self) -> EngineHealth:
         try:
@@ -316,6 +319,8 @@ class OpenDSSComAdapter(OpenDSSAdapter):
 
     # ------------------------------------------------------------ compile_case
     def compile_case(self, case_workspace: str, master_dss: str) -> CircuitHandle:
+        from pathlib import Path
+        self._native_observation_dir = Path(case_workspace).absolute().parent / "native_observation_evidence"
         from .fidelity_mapping import read_fidelity_mapping
         self._fidelity_mapping = read_fidelity_mapping(case_workspace)
         handle = CircuitHandle(
@@ -353,11 +358,48 @@ class OpenDSSComAdapter(OpenDSSAdapter):
         改一份不影响另一份 —— 那正是「口径写两遍」的隐患
         （本项目已在元件求和口径上吃过同样的亏）。
         """
-        eng.ClearAll()
-        eng.Text.Command = f'compile "{master_dss}"'
-        err_num = int(eng.Error.Number)
-        if err_num != 0:
-            return eng.Error.Description or f"error {err_num}"
+        # Copyright (c) yangshaopeng. Prevent host configuration persistence,
+        # without choosing or changing any electrical frequency in the model.
+        worker = getattr(self, "_worker", None)
+        startup = (getattr(worker, "_engine_settings", None)
+                   if getattr(worker, "_engine_identity", None) == id(eng) else None)
+        context = {"registry_isolation": {"startup": startup}}
+        compiled = False
+        compile_error = ""
+        try:
+            try:
+                configure_registry_isolation(eng)
+            except Exception as exc:
+                raise AdapterError(ErrorCode.ENGINE_ERROR,
+                                   "OpenDSS host-setting persistence guard failed before compile") from exc
+            eng.ClearAll()
+            context["before_compile"] = read_engine_option(eng, "defaultbasefrequency")
+            eng.Text.Command = f'compile "{master_dss}"'
+            err_num = int(eng.Error.Number)
+            # Preserve this before any diagnostic command replaces the engine
+            # error description. A failed read-only query consumes its own error.
+            if err_num:
+                compile_error = eng.Error.Description or f"error {err_num}"
+            else:
+                compiled = True
+        finally:
+            context["after_compile"] = read_engine_option(eng, "defaultbasefrequency")
+            observed = read_engine_option(eng, "registryupdate", boolean=True)
+            try:
+                enforced = configure_registry_isolation(eng, readback=compiled)
+            except Exception as exc:
+                raise AdapterError(ErrorCode.ENGINE_ERROR,
+                                   "OpenDSS host-setting persistence guard failed") from exc
+            context["registry_isolation"] = {
+                **enforced, "startup": startup,
+                "post_compile_observed": observed, "post_compile_enforced": enforced,
+            }
+            contexts = getattr(self, "_frequency_contexts", None)
+            if contexts is None:
+                contexts = self._frequency_contexts = {}
+            contexts[id(eng)] = context
+        if compile_error:
+            return compile_error
         return validate_compiled_circuit(_collect_com_observation(eng))
 
     # ------------------------------------------------------ apply_solver_profile
@@ -430,6 +472,12 @@ class OpenDSSComAdapter(OpenDSSAdapter):
             "iterations": int(sol.Iterations),
             "mode": "snapshot",
         }
+        from .domain_inventory import collect_domain_inventory
+        inventory_before = collect_domain_inventory(eng)
+        frequency_context = collect_frequency_context(
+            eng, getattr(self, "_frequency_contexts", {}).get(id(eng)))
+        raw.solver["frequency_hz"] = frequency_context["solution_frequency_hz"]
+        raw.solver["frequency_context"] = frequency_context
         tp = list(ckt.TotalPower or ())
         ls = list(ckt.Losses or ())
         raw.system = {
@@ -439,34 +487,22 @@ class OpenDSSComAdapter(OpenDSSAdapter):
             "losses_kvar": float(ls[1]) / 1000.0 if len(ls) > 1 else None,
         }
 
-        if ResultScope.BUS in result_scopes or ResultScope.SYSTEM in result_scopes:
+        if any(scope in result_scopes for scope in (ResultScope.BUS, ResultScope.SYSTEM, ResultScope.BRANCH, ResultScope.TRANSFORMER)):
             for name in (ckt.AllBusNames or ()):
-                ckt.SetActiveBus(name)
-                bus = ckt.ActiveBus
-                pu_va = list(bus.puVmagAngle or ())
-                nodes = list(bus.Nodes or ())
-                kv_ln = float(bus.kVBase) if bus.kVBase else None
-                base_kv = kv_ln * math.sqrt(3) if (kv_ln and len(nodes) >= 2) else kv_ln
-                raw.buses.append(
-                    {
-                        "name": str(bus.Name),
-                        "base_kv": base_kv,
-                        # 节点号必须带出去：相别身份由它决定（node1=A/2=B/3=C），
-                        # 缺相母线（IEEE13 的 645 只有 node2/3）若按位置贴标签会整体错位。
-                        "nodes": [int(n) for n in nodes],
-                        "voltage_pu": [float(v) for v in pu_va[::2]],
-                        "angle_deg": [float(a) for a in pu_va[1::2]],
-                    }
-                )
+                raw.buses.append(collect_bus_observation(ckt, str(name)))
 
         def _terminal1(ce: Any, include_current: bool = True) -> tuple[float | None, float | None, float | None]:
             n_ph = int(ce.NumPhases)
+            n_cond = int(ce.NumConductors)
             powers = list(ce.Powers or ())
             currents = list(ce.CurrentsMagAng or ()) if include_current else []
-            if len(powers) < 2 * n_ph or n_ph < 1:
+            if len(powers) < 2 * n_cond or not 1 <= n_ph <= n_cond:
                 return None, None, None
-            p = sum(float(powers[2 * i]) for i in range(n_ph))
-            q = sum(float(powers[2 * i + 1]) for i in range(n_ph))
+            # Powers is terminal-major, conductor-minor. In particular a
+            # one-/two-phase delta load has two/three conductors. Truncating
+            # to NumPhases drops real terminal power and breaks conservation.
+            p = sum(float(powers[2 * i]) for i in range(n_cond))
+            q = sum(float(powers[2 * i + 1]) for i in range(n_cond))
             i_max = max(float(currents[2 * i]) for i in range(n_ph)) if currents else None
             return p, q, i_max
 
@@ -475,65 +511,62 @@ class OpenDSSComAdapter(OpenDSSAdapter):
         # 把它当"总负荷"会让报告写出明显错误的数值（实测出现过 −57332 kW）。
         raw.system.update(self._element_power_sums(ckt, lambda ce: _terminal1(ce, False)))
 
+        def _legacy_terminal1(data):
+            # Copyright (c) yangshaopeng. Keep old scalar fields, but obtain
+            # their values only from the identity-checked COM observation.
+            n_ph = data["num_phases"]
+            n_cond = data["num_conductors"]
+            powers, currents = data["powers_kw_kvar"], data["currents_mag_a"]
+            if (not data["identity_verified"] or not n_ph or not n_cond or n_cond < n_ph
+                    or powers is None or len(powers) < 2 * n_cond):
+                return None, None, None
+            p, q = sum(powers[:2 * n_cond:2]), sum(powers[1:2 * n_cond:2])
+            current = max(currents[:n_ph]) if currents is not None and len(currents) >= n_ph else None
+            return p, q, current
+
+        def _legacy_number(getter):
+            try:
+                value = float(getter())
+                return value if value and math.isfinite(value) else None
+            except Exception:
+                return None
+
         if ResultScope.BRANCH in result_scopes:
             lines = ckt.Lines
             idx = lines.First
             while idx > 0:
-                ce = ckt.ActiveCktElement
-                bus_names = list(ce.BusNames or ())
-                normal_amps = ce.NormalAmps
-                p, q, current = _terminal1(ce)
+                name = f"Line.{lines.Name}"
+                terminal_data = collect_terminal_data(ckt, name, engine=eng)
+                bus_names = terminal_data["bus_names"] or []
+                rating = _legacy_number(lambda: ckt.ActiveCktElement.NormalAmps) if terminal_data["identity_verified"] else None
+                p, q, current = _legacy_terminal1(terminal_data)
                 raw.lines.append(
                     {
-                        "name": f"Line.{lines.Name}",
+                        "name": name,
                         "bus1": bus_names[0] if bus_names else "",
                         "bus2": bus_names[1] if len(bus_names) > 1 else "",
                         "p_kw": p,
                         "q_kvar": q,
                         "current_a": current,
-                        "rating_a": float(normal_amps) if normal_amps else None,
+                        "rating_a": rating,
+                        "rating_a_provenance": "OpenDSS.ActiveCktElement.NormalAmps; engineering_confirmation=not_established",
+                        "terminal_data": terminal_data,
                     }
                 )
                 idx = lines.Next
 
         if ResultScope.TRANSFORMER in result_scopes:
-            # 变压器端点**从源文件事实取**，不从 COM 属性取。
-            # ⚠️ 真机实测（case31，16 台 windings=2 变压器）：COM 侧
-            # `ActiveCktElement.BusNames` / `BusNodes` / `trs.BusNodes`
-            # **三条路全部返回空**（同批线路 264 条端点却全有值，
-            # 可见不是`BusNames`机制坏了，是多绕组元件在迭代态下不给出端子）。
-            # 源文件解析（`DssSourceFacts`，CLI 通道一直在用）是**同源**方案：
-            # 两条通道读同一批 `.dss`，端点必然一致；`buses=[A B]` 就在定义行上。
-            # 取不到就留空 —— 由下游判据明说"数据不足"，不猜、不编。
-            tx_buses: dict[str, tuple[str, ...]] = {}
-            # ⚠️ 无条件打诊断：`if case_workspace:` 为假时函数**根本不被调用**，
-            # 那正是"端点全空且日志 0 条"的唯一解释，却恰好一条日志都不会有。
-            # 入口处先把实参写出来，真机复现时一眼能看出是空串还是路径不对。
-            logger.warning("[transformer-endpoints] 进入采集：case_workspace=%r",
-                           case_workspace)
-            if case_workspace:
-                tx_buses = _transformer_endpoints_from_source(case_workspace)
+            # Copyright (c) yangshaopeng. Collection iterators do not prove
+            # which circuit element is active. Select the full name and verify
+            # it before reading every terminal, including multiwinding units.
             trs = ckt.Transformers
             idx = trs.First
             while idx > 0:
-                ce = ckt.ActiveCktElement
-                p, q, _ = _terminal1(ce, False)
                 tname = f"Transformer.{trs.Name}"
-                tr_bus = list(tx_buses.get(tname.lower(), ()))
-                if len(tr_bus) < 2:
-                    # 源文件没解析到（转换产物 / 非标准写法）→ 试 COM 侧，仅作兜底
-                    for getter in (
-                        lambda: list(ce.BusNodes or ()),
-                        lambda: list(ce.BusNames or ()),
-                    ):
-                        try:
-                            cand = [str(x).split(".")[0] for x in getter() if str(x).strip()]
-                        except Exception:  # noqa: BLE001 - 属性不存在就换下一条路
-                            continue
-                        cand = [x for x in cand if x]
-                        if len(cand) >= 2:
-                            tr_bus = cand
-                            break
+                terminal_data = collect_terminal_data(ckt, tname, engine=eng)
+                p, q, _ = _legacy_terminal1(terminal_data)
+                tr_bus = [name.split(".")[0] for name in terminal_data["bus_names"] or []]
+                rated = _legacy_number(lambda: trs.kVA) if terminal_data["identity_verified"] else None
                 raw.transformers.append(
                     {
                         "name": tname,
@@ -541,19 +574,25 @@ class OpenDSSComAdapter(OpenDSSAdapter):
                         "bus2": tr_bus[1] if len(tr_bus) > 1 else "",
                         "p_kw": p,
                         "q_kvar": q,
-                        "rated_kva": float(trs.kVA) if trs.kVA else None,
+                        "rated_kva": rated,
+                        "rated_kva_provenance": "OpenDSS.Transformers.kVA of selected winding; engineering_confirmation=not_established",
+                        "terminal_data": terminal_data,
                     }
                 )
                 idx = trs.Next
 
-            # 端点命中率：区分三种失败（源解析没覆盖 / 键名对不上 / 采集压根没跑）
-            if raw.transformers:
-                _hit = sum(1 for t in raw.transformers if t["bus1"] and t["bus2"])
-                logger.warning(
-                    "[transformer-endpoints] 采集完成：%d/%d 台拿到两个端点；"
-                    "源键样例=%s", _hit, len(raw.transformers),
-                    list(tx_buses)[:3])
-
+        from .pce_observations import collect_power_conversion_elements
+        raw.power_conversion_elements, raw.power_conversion_elements_coverage = collect_power_conversion_elements(
+            eng, requested=ResultScope.SYSTEM in result_scopes)
+        if ResultScope.SYSTEM in result_scopes:
+            original_element = ckt.ActiveCktElement.Name
+            try:
+                raw.auxiliary_elements = [{"name":str(name), "class":str(name).split(".",1)[0].casefold(),
+                    "terminal_data":collect_terminal_data(ckt,str(name),engine=eng)}
+                    for name in ckt.AllElementNames
+                    if str(name).split(".",1)[0].casefold() in {"vsource","capacitor","reactor"}]
+            finally:
+                ckt.SetActiveElement(original_element)
         raw.element_count = {
             "bus": int(ckt.NumBuses),
             "line": len(raw.lines),
@@ -565,9 +604,30 @@ class OpenDSSComAdapter(OpenDSSAdapter):
         # 是**哪一版采集逻辑**产出的 —— 只能靠比对进程启动时间与文件 mtime，
         # 绕了很远。产物自带版本戳后，一眼可判"这是旧版跑出来的，重新算"。
         raw.collector_version = ADAPTER_VERSION
+        raw.solver["domain_inventory"] = {"before":inventory_before, "after":collect_domain_inventory(eng)}
+        if ResultScope.SYSTEM in result_scopes:
+            # Freeze the complete native passive boundary before conversion
+            # mapping folds source objects or separately labels Gs/Bs shunts.
+            # Additional reads serve balance only, without expanding display domains.
+            from ..domain.passive_power_balance import KINDS, build_passive_power_boundary
+            native_records = {row["name"].casefold(): row for row in [*raw.lines, *raw.transformers,
+                *(row for row in (raw.auxiliary_elements or []) if row.get("class") in {"capacitor", "reactor"})]}
+            selected = ckt.ActiveCktElement.Name
+            try:
+                names = inventory_before.get("fields", {}).get("element_names", {}).get("value", [])
+                for name in names if isinstance(names, list) else []:
+                    if str(name).split(".", 1)[0].casefold() in KINDS and str(name).casefold() not in native_records:
+                        native_records[str(name).casefold()] = {"name":str(name), "class":str(name).split(".", 1)[0].casefold(),
+                            "terminal_data":collect_terminal_data(ckt, str(name), engine=eng)}
+            finally:
+                ckt.SetActiveElement(selected)
+            raw.solver["domain_inventory"]["after"] = collect_domain_inventory(eng)
+            raw.system["passive_power_boundary"] = build_passive_power_boundary({"solver":raw.solver,
+                "buses":raw.buses, "auxiliary_elements":raw.auxiliary_elements}, list(native_records.values()))
         from .fidelity_mapping import apply_fidelity_mapping, measured_terminal_reader
         apply_fidelity_mapping(raw, getattr(self, "_fidelity_mapping", []),
                                measured_terminal_reader(ckt), result_scopes, ckt.AllBusNames)
+        raw.solver["domain_inventory"] = {"before":inventory_before, "after":collect_domain_inventory(eng)}
         return raw
 
     # ------------------------------------------------- element power summation

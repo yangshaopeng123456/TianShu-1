@@ -1,9 +1,9 @@
-"""天枢一号 (Distribution Power Flow Agent) V1.7.
+"""天智五号 (Distribution Power Flow Agent) V1.7.
 
 本地大模型主控编排 + OpenDSS 数值计算 + 规则校验兜底 + 独立验证 + 证据化发布。
 """
 
-__version__ = "1.7.1"
+__version__ = "1.8.2"
 # ⚠️ 改适配器的**结果采集/计算逻辑**后必须升这个号。
 #
 # 为什么它进了缓存键：`_solve_cache_key` 把 `version_set` 一起哈希，
@@ -20,5 +20,8 @@ __version__ = "1.7.1"
 #
 # 判断标准：**同一算例、同样的问题，改动前后答案是否应当不同？**
 # 应当不同 → 升号；不应不同（纯注释/日志/诊断）→ 不用升。
-ADAPTER_VERSION = "1.7.1"
+# 2026-10-25：补齐既有完整被动边界采集的1.8.2声明；采集算法不改。
+# 激活normalizer既有现代验证契约：新输出缺边界不得回落旧版推导。
+# 保守更新未来请求的缓存版本；历史结果、缓存和参考文件不改写。
+ADAPTER_VERSION = "1.8.2"
 DEFAULTS_VERSION = "sim-defaults-v1.1"

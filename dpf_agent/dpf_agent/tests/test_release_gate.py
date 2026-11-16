@@ -41,7 +41,7 @@ class ReleaseGateTests(unittest.TestCase):
     def _write_tree(self, root: Path):
         previous = self.dev
         self.dev = root
-        for directory in ("dpf_agent/dpf_agent/tests", "dpf_agent/dpf_agent/web", "tianshu_ui/renderer"):
+        for directory in ("dpf_agent/dpf_agent/tests", "dpf_agent/dpf_agent/web", "tianshu_ui/renderer", "integrations/deepseek-harness"):
             (root / directory).mkdir(parents=True)
         self._write("dpf_agent/dpf_agent/__init__.py", '__version__="2.0.0"\nADAPTER_VERSION="2.0.0"\n')
         self._write("dpf_agent/dpf_agent/tests/__init__.py", "")
@@ -49,7 +49,14 @@ class ReleaseGateTests(unittest.TestCase):
         self._write("dpf_agent/requirements.txt", "# fixture only\n")
         self._write("tianshu_ui/package.json", '{"version":"1.0.0"}')
         self._write("tianshu_ui/main.js", "// fixture only\n")
+        self._write("tianshu_ui/setup-electron.js", "// fixture installer entry\n")
+        for support in gate.SUPPORT_FILES:
+            self._write(support, "# fixture support file\n")
+        self._write("examples/professional-extension/read_only_extension.py", "# fixture extension\n")
+        self._write("examples/professional-extension/README.md", "# fixture extension guide\n")
         self._write("tianshu_ui/renderer/app.js", "// fixture UI source\n")
+        for name in ("package.json", "index.js", "cordis.patch.yml", "lib/bridge.js", "lib/runtime.js", "service_host.py"):
+            self._write("integrations/deepseek-harness/" + name, "# inventory fixture only\n")
         self._write("dpf_agent/dpf_agent/tests/run_all.py", """import json,os,pathlib
 print('FIXTURE dynamic suite entry; no production suite was executed')
 names=('TEMP','TMP','DPF_CHAT_DB_DIR','DPF_WORKSPACE','DPF_OUTPUTS','DPF_TEST_ARTIFACT_ROOT')
@@ -73,7 +80,7 @@ pathlib.Path(os.environ['DPF_TEST_ARTIFACT_ROOT'],'environment.json').write_text
         self.assertFalse(self.step(result, "native_com")["native_executed"])
         recorded = json.loads((self.config.evidence_dir / "test_artifacts/environment.json").read_text())
         self.assertTrue(all(Path(value).is_relative_to(self.config.evidence_dir) for value in recorded.values()))
-        self.assertEqual(json.loads((self.config.evidence_dir / "gate_result.json").read_text())["run_id"], result["run_id"])
+        self.assertEqual(json.loads((self.config.evidence_dir / "gate_result.json").read_text(encoding="utf-8"))["run_id"], result["run_id"])
 
     def test_real_offline_subprocess_failure_is_not_ignored(self):
         self._write("dpf_agent/dpf_agent/tests/run_all.py", "print('intentional fixture failure');raise SystemExit(7)\n")
@@ -109,6 +116,26 @@ pathlib.Path(os.environ['DPF_TEST_ARTIFACT_ROOT'],'environment.json').write_text
         result = gate.run_gate(replace(self.config, node=str(self.root / "missing-node")))
         self.assertFalse(result["passed"])
         self.assertEqual(self.step(result, "verify_races")["status"], "failed")
+
+    def test_installer_or_locked_dependency_omission_cannot_pass_inventory(self):
+        for relative in ("scripts/install-electron.py", "dpf_agent/requirements-windows-py313.lock.txt",
+                         "tianshu_ui/setup-electron.js"):
+            with self.subTest(relative=relative):
+                path = self.dev / relative
+                original = path.read_bytes()
+                path.unlink()
+                try:
+                    with self.assertRaisesRegex(ValueError, "Missing required delivery files"):
+                        gate.source_inventory(self.dev)
+                finally:
+                    path.write_bytes(original)
+
+    def test_discovered_launcher_check_failure_prevents_delivery(self):
+        self._write("tianshu_ui/verify_launcher.js", "print('intentional fixture launch failure');raise SystemExit(9)\n")
+        result = gate.run_gate(self.config)
+        self.assertFalse(result["passed"])
+        self.assertEqual(self.step(result, "verify_launcher")["exit_code"], 9)
+        self.assertIn("verify_launcher.js", result["required_ui_checks"])
 
     def test_required_native_absence_is_visible_and_fails(self):
         result = gate.run_gate(replace(self.config, native="required"))
@@ -157,11 +184,17 @@ pathlib.Path(os.environ['DPF_GATE_NATIVE_RESULT']).write_text(json.dumps(r))
         release = self.root / "release"
         shutil.copytree(self.dev, release)
         (release / "tianshu_ui/renderer/app.js").write_text("// changed release source\n")
+        (release / "integrations/deepseek-harness/lib/bridge.js").write_text("// out-of-date Harness adapter\n")
+        (release / "scripts/start-harness.js").write_text("// stale main entry\n")
+        (release / "examples/professional-extension/read_only_extension.py").write_text("# stale extension\n")
         self._write("dpf_agent/dpf_agent/new_module.py", "# source missing from release\n")
         result = gate.run_gate(replace(self.config, mode="final", release_root=release))
         sync = self.step(result, "release_sync")
         self.assertFalse(result["passed"])
         self.assertIn("tianshu_ui/renderer/app.js", sync["different"])
+        self.assertIn("integrations/deepseek-harness/lib/bridge.js", sync["different"])
+        self.assertIn("scripts/start-harness.js", sync["different"])
+        self.assertIn("examples/professional-extension/read_only_extension.py", sync["different"])
         self.assertIn("dpf_agent/dpf_agent/new_module.py", sync["missing_in_release"])
 
     def test_user_runtime_and_secret_files_are_not_hashed_or_required_equal(self):
@@ -201,7 +234,7 @@ pathlib.Path(os.environ['DPF_GATE_NATIVE_RESULT']).write_text(json.dumps(r))
         self.assertFalse(result["delivered"])
         self.assertTrue(result["interrupted"])
         self.assertEqual(self.step(result, "gate_incomplete")["status"], "failed")
-        self.assertFalse(json.loads((self.config.evidence_dir / "gate_result.json").read_text())["passed"])
+        self.assertFalse(json.loads((self.config.evidence_dir / "gate_result.json").read_text(encoding="utf-8"))["passed"])
 
     def test_command_timeout_terminates_only_the_launched_fixture_process(self):
         directory = self.root / "command-evidence"
@@ -280,7 +313,7 @@ pathlib.Path(os.environ['DPF_GATE_NATIVE_RESULT']).write_text(json.dumps(r))
                               "--node", sys.executable])
         self.assertEqual(code, 1)
         self.assertFalse(json.loads(stdout.getvalue())["passed"])
-        self.assertEqual(json.loads((self.config.evidence_dir / "gate_result.json").read_text())["status"], "failed")
+        self.assertEqual(json.loads((self.config.evidence_dir / "gate_result.json").read_text(encoding="utf-8"))["status"], "failed")
 
 
 def main() -> int:

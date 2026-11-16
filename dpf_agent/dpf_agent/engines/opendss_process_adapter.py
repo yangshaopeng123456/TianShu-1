@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import atexit
 import ctypes
+import hashlib
+import json
 import math
 import multiprocessing as mp
 from multiprocessing.reduction import ForkingPickler
@@ -112,13 +114,17 @@ def _worker_main(connection, settings: dict, factory) -> None:
                         raise AdapterError(ErrorCode.ENGINE_ERROR, "原生算例上下文已失效，禁止在新引擎继续旧任务")
                     value = getattr(adapter, operation)(circuits[circuit_id], *remaining, **kwargs)
                 elif operation == "context_signature":
+                    include_frequency = kwargs.pop("include_frequency", False)
                     def read(engine):
                         sol = engine.ActiveCircuit.Solution
-                        return {"mode": int(sol.Mode), "control_mode": int(sol.ControlMode),
-                                "hour": float(sol.DblHour), "max_iterations": int(sol.MaxIterations),
-                                "tolerance": float(sol.Tolerance)}
+                        result = {"mode": int(sol.Mode), "control_mode": int(sol.ControlMode),
+                                  "hour": float(sol.DblHour), "max_iterations": int(sol.MaxIterations),
+                                  "tolerance": float(sol.Tolerance)}
+                        if include_frequency:
+                            result["frequency_hz"] = float(sol.Frequency)
+                        return result
                     value = adapter.run_with_engine(read, **kwargs)
-                elif operation in {"health", "collect_circuit_inventory", "engine_diagnostics"}:
+                elif operation in {"health", "collect_circuit_inventory", "collect_device_connections", "engine_diagnostics"}:
                     value = getattr(adapter, operation)(*args, **kwargs)
                 else:
                     raise ValueError("不支持的原生引擎操作")
@@ -176,6 +182,12 @@ class OpenDSSProcessAdapter:
         self._reader = None
         self._circuits: dict[str, Any] = {}
         self._cleanup_errors: list[str] = []
+        self._required_frequency_hz = None
+        self.last_frequency_check = None
+        self._required_device_semantics = None
+        self._required_device_semantics_sha256 = None
+        self.last_device_check = None
+        self._device_guard_attempts = 0
         _LIVE.add(self)
 
     def _start(self) -> None:
@@ -393,30 +405,161 @@ class OpenDSSProcessAdapter:
     def collect_circuit_inventory(self):
         return self._rpc("collect_circuit_inventory")
 
-    def context_signature(self, timeout_s: float | None = None):
-        return self._rpc("context_signature", timeout_s=self.com_quick_timeout_s if timeout_s is None else timeout_s)
+    def collect_device_connections(self, timeout_s=None):
+        native = self._rpc("collect_device_connections", timeout_s=self.com_quick_timeout_s if timeout_s is None else timeout_s)
+        baseline = getattr(self, "_snapshot_state_baseline", None)
+        if baseline is not None:
+            native["snapshot_state_baseline"] = json.loads(json.dumps(baseline, allow_nan=False))
+        pv_baseline=getattr(self,"_pv_controls_baseline",None)
+        if pv_baseline is not None:
+            native["pv_controls_baseline"]=json.loads(json.dumps(pv_baseline,allow_nan=False))
+        stamp_baseline=getattr(self,"_passive_stamp_baseline",None)
+        if stamp_baseline is not None:
+            native["passive_stamp_baseline"]=json.loads(json.dumps(stamp_baseline,allow_nan=False))
+        return native
+
+    def context_signature(self, timeout_s: float | None = None, *, include_frequency=False):
+        return self._rpc("context_signature", include_frequency=include_frequency,
+                         timeout_s=self.com_quick_timeout_s if timeout_s is None else timeout_s)
+
+    def _check_required_frequency(self, timeout_s=None):
+        """Check the actual native context; never set electrical conditions."""
+        expected = self._required_frequency_hz
+        if expected is None:
+            return None
+        actual = None
+        try:
+            actual = self.context_signature(timeout_s=timeout_s, include_frequency=True).get("frequency_hz")
+            valid = (not isinstance(actual, bool) and isinstance(actual, (int, float))
+                     and math.isfinite(actual) and actual > 0)
+        except Exception as exc:
+            if isinstance(exc, AdapterError) and exc.code in {ErrorCode.CANCELLED, ErrorCode.TIMEOUT}:
+                raise
+            self.last_frequency_check = {"expected_frequency_hz": expected, "actual_frequency_hz": None,
+                                         "status": "not_available", "frequency_modified": False,
+                                         "source": "OpenDSS.ActiveCircuit.Solution.Frequency"}
+            raise AdapterError(ErrorCode.VALIDATION_FAILED,
+                               "无法核对声明的运行频率，禁止继续主潮流求解") from exc
+        matched = valid and math.isclose(actual, expected, rel_tol=0.0, abs_tol=1e-9)
+        self.last_frequency_check = {"expected_frequency_hz": expected,
+                                     "actual_frequency_hz": actual if valid else None,
+                                     "status": "matched" if matched else "mismatch" if valid else "not_available",
+                                     "frequency_modified": False,
+                                     "source": "OpenDSS.ActiveCircuit.Solution.Frequency"}
+        if not matched:
+            raise AdapterError(ErrorCode.VALIDATION_FAILED,
+                               f"实际运行频率{actual if valid else '未取得'}Hz与声明{expected}Hz不符，禁止暗改工况")
+        return dict(self.last_frequency_check)
+
+    def require_frequency(self, frequency_hz):
+        try:
+            valid = (not isinstance(frequency_hz, bool) and isinstance(frequency_hz, (int, float))
+                     and math.isfinite(frequency_hz) and 0 < frequency_hz <= 1000)
+        except (ValueError, OverflowError):
+            valid = False
+        if not valid:
+            raise AdapterError(ErrorCode.REQ_SCHEMA_INVALID, "声明频率必须是0至1000Hz内的有限正数")
+        with self._lock:
+            if self._required_frequency_hz is not None and self._required_frequency_hz != float(frequency_hz):
+                raise AdapterError(ErrorCode.VALIDATION_FAILED, "同一数值上下文不能替换已绑定运行频率")
+            self._required_frequency_hz = float(frequency_hz)
+            return self._check_required_frequency()
+
+    def _check_required_devices(self, timeout_s=None):
+        if self._required_device_semantics is None:
+            return None
+        self._device_guard_attempts += 1
+        from ..professional.device_verification import verify_device_connections
+        native = None
+        read_error = None
+        try:
+            native = self.collect_device_connections(timeout_s=timeout_s)
+        except AdapterError as exc:
+            read_error = exc
+        report = verify_device_connections(self._required_device_semantics, native)
+        if (report["passed"] and "snapshot_state" in self._required_device_semantics
+                and getattr(self,"_snapshot_state_baseline",None) is None):
+            self._snapshot_state_baseline = json.loads(json.dumps(native["snapshot_state"], allow_nan=False))
+            native["snapshot_state_baseline"] = json.loads(json.dumps(self._snapshot_state_baseline, allow_nan=False))
+        if (report["passed"] and self._required_device_semantics.get("pv_fixed_points_required") is True
+                and getattr(self,"_pv_controls_baseline",None) is None):
+            self._pv_controls_baseline=json.loads(json.dumps(native["pv_controls"],allow_nan=False))
+            native["pv_controls_baseline"]=json.loads(json.dumps(self._pv_controls_baseline,allow_nan=False))
+        if (report["passed"] and self._required_device_semantics.get("passive_stamp_required") is True
+                and getattr(self,"_passive_stamp_baseline",None) is None):
+            self._passive_stamp_baseline=json.loads(json.dumps(native["passive_stamp"],allow_nan=False))
+            native["passive_stamp_baseline"]=json.loads(json.dumps(self._passive_stamp_baseline,allow_nan=False))
+        self.last_device_check = {"task_id": self.task_id,
+                                  "declarations_sha256": self._required_device_semantics_sha256,
+                                  "native_readback": native, "verification": report,
+                                  "electrical_parameters_modified": False}
+        if read_error is not None:
+            self.last_device_check["read_error"] = {"code":read_error.code.value, "message":read_error.message}
+            if read_error.code in {ErrorCode.CANCELLED, ErrorCode.TIMEOUT}:
+                raise read_error
+        if not report["passed"]:
+            raise AdapterError(ErrorCode.VALIDATION_FAILED,
+                               "设备或绕组声明未与真实OpenDSS读回值核对一致，禁止继续主潮流求解")
+        return json.loads(json.dumps(self.last_device_check, allow_nan=False))
+
+    def require_device_semantics(self, declarations):
+        try:
+            encoded = json.dumps(declarations, sort_keys=True, ensure_ascii=False,
+                                 separators=(",", ":"), allow_nan=False).encode("utf-8")
+            if (not isinstance(declarations, dict) or declarations.get("version") not in {"1.0", "1.1", "1.2", "1.3", "1.4"}
+                    or not isinstance(declarations.get("objects"), list)
+                    or len(encoded) > 20 * 1024 * 1024):
+                raise ValueError("invalid device declaration budget")
+        except (ValueError, TypeError, UnicodeError, RecursionError) as exc:
+            raise AdapterError(ErrorCode.REQ_SCHEMA_INVALID, "设备声明必须为预算内的有限JSON对象") from exc
+        digest = hashlib.sha256(encoded).hexdigest()
+        with self._lock:
+            if self._required_device_semantics_sha256 not in {None, digest}:
+                raise AdapterError(ErrorCode.VALIDATION_FAILED, "同一数值上下文不能替换已绑定设备声明")
+            self._required_device_semantics = json.loads(encoded)
+            self._required_device_semantics_sha256 = digest
+            return self._check_required_devices()
 
     def solve(self, circuit: CircuitHandle, *, iteration_limit=None, timeout_s=None):
-        self._check_circuit(circuit)
-        limit = min(self.solve_timeout_s, timeout_s) if timeout_s is not None else self.solve_timeout_s
-        return self._rpc("solve", circuit.handle_id, iteration_limit=iteration_limit, timeout_s=limit)
+        with self._lock:
+            self._check_circuit(circuit)
+            limit = min(self.solve_timeout_s, timeout_s) if timeout_s is not None else self.solve_timeout_s
+            deadline = time.monotonic() + limit
+            def remaining():
+                value = deadline - time.monotonic()
+                if value <= 0:
+                    raise AdapterError(ErrorCode.TIMEOUT, "设备/频率核对已用尽本次Solve预算")
+                return value
+            self._check_required_frequency(timeout_s=remaining())
+            self._check_required_devices(timeout_s=remaining())
+            return self._rpc("solve", circuit.handle_id, iteration_limit=iteration_limit,
+                             timeout_s=deadline - time.monotonic())
 
     def extract_raw_result(self, circuit: CircuitHandle, result_scopes, *, timeout_s=None):
-        self._check_circuit(circuit)
-        return self._rpc("extract_raw_result", circuit.handle_id, result_scopes,
-                         timeout_s=min(self.com_timeout_s, timeout_s) if timeout_s is not None else self.com_timeout_s)
+        with self._lock:
+            self._check_circuit(circuit)
+            limit = min(self.com_timeout_s, timeout_s) if timeout_s is not None else self.com_timeout_s
+            deadline = time.monotonic() + limit
+            raw = self._rpc("extract_raw_result", circuit.handle_id, result_scopes, timeout_s=limit)
+            if self._required_device_semantics is not None:
+                raw.solver["device_connections"] = self.collect_device_connections(timeout_s=deadline - time.monotonic())
+            return raw
 
     def engine_diagnostics(self):
         with self._lock:
             process = self._process
             if process is not None and not process.is_alive():
                 self._terminate("原生引擎进程已退出")
-            return {"process_isolated": True, "pid": self._last_pid, "state": self._state,
+            report = {"process_isolated": True, "pid": self._last_pid, "state": self._state,
                     "alive": bool(self._process is not None and self._process.is_alive()), "exitcode": self._exitcode,
                     "requests": self._requests, "last_error": self._last_error,
                     "cleanup_errors": list(self._cleanup_errors),
                     "rpc_reader_alive": bool(self._reader and self._reader.is_alive()),
                     "parent_exit_guard": "windows_job" if os.name == "nt" else "pipe_eof_idle_only"}
+            if self._required_device_semantics is not None:
+                report.update(task_id=self.task_id, device_guard_attempts=self._device_guard_attempts,
+                              last_device_check=json.loads(json.dumps(self.last_device_check, allow_nan=False)))
+            return report
 
     def close(self, circuit: CircuitHandle) -> None:
         if circuit.dss_ctx is not self:

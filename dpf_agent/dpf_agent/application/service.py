@@ -6,10 +6,12 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import threading
 import time
 import uuid
+from dataclasses import replace
 from typing import Any, Callable
 
 from .. import ADAPTER_VERSION
@@ -120,10 +122,16 @@ def current_task_lock() -> dict[str, Any]:
 
 
 class ApplicationService:
-    def __init__(self, config: AgentConfig | None = None):
+    def __init__(self, config: AgentConfig | None = None, *, structured_only: bool = False):
+        self.structured_only = structured_only
         self.config = config or DEFAULT_CONFIG
+        if structured_only:
+            # The professional entry has no hidden legacy inference/retrieval.
+            # Copy configuration so an existing desktop service is unaffected.
+            self.config = replace(self.config, llm_enabled=False, rag_enabled=False,
+                                  power_rag_enabled=False, solve_cache_enabled=False)
         self.guard = RuleGuard()
-        self.model_client = ModelClient(self.config)
+        self.model_client = None if structured_only else ModelClient(self.config)
         # 统一规范化为绝对路径，避免调用方 cwd 变化造成任务和历史产物漂移。
         self.config.workspace_root = os.path.abspath(self.config.workspace_root)
         self.config.outputs_root = os.path.abspath(self.config.outputs_root)
@@ -279,14 +287,40 @@ class ApplicationService:
         self._write_progress(task_id, stage, label, percent)
         self._persist_state(state, workspace, stage)
 
+    def run_structured(
+        self,
+        task_spec: PowerFlowTaskSpec,
+        *,
+        progress_callback: Callable[[str, str, int], None] | None = None,
+    ) -> AgentResponse:
+        """Execute the same guarded numerical transaction without legacy chat.
+
+        The caller persists this reserved identity before dispatch. Model or
+        numerical recovery is disabled until an approved policy is connected.
+        Engineering assessment/reporting belongs to the professional service.
+        """
+        if not self.structured_only:
+            raise ValueError("run_structured requires structured_only=True")
+        if not re.fullmatch(r"pf-[A-Za-z0-9-]{8,96}", task_spec.task_id):
+            raise ValueError("Invalid reserved task identity")
+        return self.run(UserRequest(), cli_callback=None,
+                        _structured_spec=task_spec.model_copy(deep=True),
+                        _progress_callback=progress_callback)
+
     def run(
         self,
         request: UserRequest,
         cli_callback: Callable[[str], None] | None = print,
         *,
         on_task_started: Callable[[str], None] | None = None,
+        _structured_spec: PowerFlowTaskSpec | None = None,
+        _progress_callback: Callable[[str, str, int], None] | None = None,
     ) -> AgentResponse:
-        task_id = f"pf-{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6]}"
+        if self.structured_only and _structured_spec is None:
+            raise ValueError("Use run_structured for the professional service")
+        structured = _structured_spec is not None
+        task_id = (_structured_spec.task_id if structured else
+                   f"pf-{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6]}")
         workspace = os.path.join(self.config.workspace_root, task_id)
         os.makedirs(workspace, exist_ok=True)
 
@@ -306,10 +340,17 @@ class ApplicationService:
             )
         _TASK_LOCK_OWNER["task_id"] = task_id
         _TASK_LOCK_OWNER["since"] = time.time()
+        last_percent = 0
+        def mark(stage: str, label: str, percent: int) -> None:
+            nonlocal last_percent
+            self._mark_progress_stage(state, workspace, task_id, stage, label, percent)
+            if _progress_callback is not None:
+                last_percent = max(last_percent, percent)
+                _progress_callback(stage, label, last_percent)
         try:
             if on_task_started is not None:
                 on_task_started(task_id)
-            self._mark_progress_stage(state, workspace, task_id, "init", "正在准备任务…", 5)
+            mark("init", "正在准备任务…", 5)
 
             state.version_set = {
                 "adapter": ADAPTER_VERSION,
@@ -320,16 +361,13 @@ class ApplicationService:
             }
             # LLM 消耗计量：本任务期间累计，收尾写入 llm_usage.json
             llm_trace_mark: int | None = None
-            try:
-                from ..runtime.model_client import reset_usage, trace_mark
-
-                reset_usage()
-                # LLM 调用留痕起点（P3）：收尾用 trace_since(mark) 精确取本任务的调用。
-                # 用 mark/since 而不是 reset，是为了不误伤聊天层——意图判定与知识库问答
-                # 发生在任务开始之前，它们不属于任何任务，只能靠进程级 jsonl 日志留痕。
-                llm_trace_mark = trace_mark()
-            except Exception:
-                pass
+            if not structured:
+                try:
+                    from ..runtime.model_client import reset_usage, trace_mark
+                    reset_usage()
+                    llm_trace_mark = trace_mark()
+                except Exception:
+                    pass
 
             if request.message:
                 tracer.emit(
@@ -346,26 +384,30 @@ class ApplicationService:
 
             try:
                 # ---- receive_request + resolve_constraints（任务解析） ----
-                self._mark_progress_stage(state, workspace, task_id, "parse", "正在理解任务意图…", 10)
+                mark("parse", "正在核对结构化请求…" if structured else "正在理解任务意图…", 10)
                 # ⚠️ 下面这句要调一次大模型（实测 5~11 秒）。此前这段时间**没有任何事件**：
                 # 过程面板一直空着，等解析完才把后面所有阶段一次性涌出来 ——
                 # 观感就是"过程是一下子生成的"。所以耗时的**开始**也要报一条，
                 # 让界面知道"现在卡在哪一步、大约要多久"，而不是干等。
                 tracer.emit(
                     EventType.UNDERSTAND, stage="parse_intent",
-                    message="正在理解任务意图：识别算例、结果范围与参数约束…",
+                    message=("正在核对已指定的算例、结果范围与参数约束…" if structured else
+                             "正在理解任务意图：识别算例、结果范围与参数约束…"),
                     status=EventStatus.RUNNING,
                 )
-                parsed = self.model_client.parse_request(request)
-                task_spec = self._build_task_spec(task_id, parsed, request)
-                self._mark_progress_stage(
-                    state, workspace, task_id, "constraints", "已确定算例与约束", 20
-                )
+                if structured:
+                    task_spec = _structured_spec
+                    parser = "structured-v1"
+                else:
+                    parsed = self.model_client.parse_request(request)
+                    task_spec = self._build_task_spec(task_id, parsed, request)
+                    parser = parsed.parser
+                mark("constraints", "已确定算例与约束", 20)
                 tracer.emit(
                     EventType.UNDERSTAND, stage="parse_intent",
-                    message=f"意图已解析（解析器：{parsed.parser}）：{task_spec.user_goal}",
+                    message=f"请求已确定（解析器：{parser}）：{task_spec.user_goal}",
                     detail={
-                        "parser": parsed.parser,
+                        "parser": parser,
                         "user_goal": task_spec.user_goal,
                         "result_scopes": [s.value for s in task_spec.result_scopes],
                     },
@@ -375,11 +417,11 @@ class ApplicationService:
                     message=(
                         f"目标：{task_spec.user_goal}，结果范围 "
                         f"{', '.join(s.value for s in task_spec.result_scopes)}"
-                        f"（解析器: {parsed.parser}）"
+                        f"（解析器: {parser}）"
                     ),
                     detail={
                         "user_goal": task_spec.user_goal,
-                        "parser": parsed.parser,
+                        "parser": parser,
                         "result_scopes": [s.value for s in task_spec.result_scopes],
                     },
                 )
@@ -396,7 +438,7 @@ class ApplicationService:
                 )
 
                 # ---- request_guard ----
-                self._mark_progress_stage(state, workspace, task_id, "guard", "正在校验请求…", 22)
+                mark("guard", "正在校验请求…", 22)
                 self.guard.check_request(task_spec, raw_message=request.message or "")
                 tracer.emit(EventType.GUARD, stage="request_guard", message="请求门校验通过")
                 task_spec.freeze()
@@ -444,10 +486,10 @@ class ApplicationService:
                 # Cache publication belongs to the complete service lifecycle;
                 # cancellation during result explanation cannot leave a cache.
                 ctx.defer_cache_commit = True
+                if structured:
+                    ctx.allowed_recovery_actions = ()
                 # 引擎健康检查（执行门）——带硬超时，避免原生库挂死时请求永不返回
-                self._mark_progress_stage(
-                    state, workspace, task_id, "engine", "正在检查计算引擎…", 25
-                )
+                mark("engine", "正在检查计算引擎…", 25)
                 # 启动前先报告阶段；冷启动耗时依机器而异，不用旧环境估计冒充本次实测。
                 tracer.emit(
                     EventType.VERIFY, stage="engine_health",
@@ -467,23 +509,17 @@ class ApplicationService:
                 state.task_spec_ref = ctx.save_json("task_spec.json", task_spec)
 
                 # ---- 固定工作流 ----
-                self._mark_progress_stage(
-                    state, workspace, task_id,
-                    "solve", "正在编译算例并求解潮流（大算例可能需要几分钟）…", 30,
-                )
+                mark("solve", "正在编译算例并求解潮流（大算例可能需要几分钟）…", 30)
                 # 把 7 个工具阶段的真实进度推给 UI：以前整段只写一次 30%，
                 # 求解大算例时右侧执行监控会长时间停在同一个位置，看起来像卡死。
                 skill_result = run_fixed_powerflow_skill(
                     ctx, state, tracer, self.guard,
-                    progress_cb=lambda stage, label, pct: self._mark_progress_stage(
-                        state, workspace, task_id, stage, label, pct
-                    ),
+                    progress_cb=mark,
+                    strict_progress=structured,
                 )
                 if is_cancelled(task_id):
                     raise ToolFailure(ErrorCode.CANCELLED, TaskStatus.CANCELLED, "任务已被用户取消")
-                self._mark_progress_stage(
-                    state, workspace, task_id, "verify", "正在校验结果与生成报告…", 96
-                )
+                mark("verify", "正在校验结果与生成报告…", 96)
                 verification = skill_result.verification
                 evidence = skill_result.evidence
 
@@ -498,17 +534,22 @@ class ApplicationService:
                 # 免得报告生成前又是几秒空白。
                 tracer.emit(
                     EventType.RESULT, stage="explain_result",
-                    message="正在把结果转述成中文说明（数值全部取自本次求解产物）…",
+                    message=("正在整理已验证的结构化结果…" if structured else
+                             "正在把结果转述成中文说明（数值全部取自本次求解产物）…"),
                     status=EventStatus.RUNNING,
                 )
-                explanation, explanation_source = self._explain(ctx, task_spec)
+                if structured:
+                    explanation, explanation_source = "", "structured"
+                else:
+                    explanation, explanation_source = self._explain(ctx, task_spec)
                 if is_cancelled(task_id):
                     raise ToolFailure(ErrorCode.CANCELLED, TaskStatus.CANCELLED, "任务已被用户取消")
                 tracer.emit(
                     EventType.RESULT, stage="explain_result",
-                    message="结果说明已生成（来源："
-                    + ("大模型" if explanation_source == "llm" else "确定性模板")
-                    + "）",
+                    message=("结构化结果已整理，工程校核独立记录" if structured else
+                             "结果说明已生成（来源："
+                             + ("大模型" if explanation_source == "llm" else "确定性模板")
+                             + "）"),
                     detail={"source": explanation_source},
                 )
                 state.phase = Phase.RESULT_VERIFIED
@@ -548,14 +589,15 @@ class ApplicationService:
                     verification = self._cancelled_verification(ctx, state)
                     explanation = ""
                 else:
-                    try:
-                        from ..runtime import crashlog
-                        crashlog.record(
-                            exc, kind="manual",
-                            extra={"task_id": task_id, "stage": "runtime", "where": "service.run"},
-                        )
-                    except Exception:
-                        pass
+                    if not structured:
+                        try:
+                            from ..runtime import crashlog
+                            crashlog.record(
+                                exc, kind="manual",
+                                extra={"task_id": task_id, "stage": "runtime", "where": "service.run"},
+                            )
+                        except Exception:
+                            pass
                     tracer.emit(
                         EventType.RESULT, stage="runtime",
                         message=f"系统异常: {exc}", status=EventStatus.FAILED,
@@ -581,14 +623,14 @@ class ApplicationService:
             if state.status in {TaskStatus.SUCCESS, TaskStatus.PARTIAL} and is_cancelled(task_id):
                 verification = self._cancelled_verification(ctx, state)
                 explanation = ""
-            self._mark_progress_stage(state, workspace, task_id, "report", "正在生成报告…", 92)
+            mark("report", "正在整理权威结果…" if structured else "正在生成报告…", 98 if structured else 92)
             artifacts = dict(ctx.artifacts) if ctx else {}
 
             # ---- 失败/降级诊断（讲人话）----
             # 必须放在 `_persist_state` 之前：诊断文本要随 state.json 一起落盘，
             # 也要进 artifacts 清单，事后复查时能回答"当时到底怎么跟用户说的"。
             try:
-                diagnosis_text, diagnosis_source = self._diagnose(ctx, state)
+                diagnosis_text, diagnosis_source = ("", "skip") if structured else self._diagnose(ctx, state)
             except Exception:  # noqa: BLE001 - 诊断失败不得影响任务结论
                 diagnosis_text, diagnosis_source = "", "rule"
             if diagnosis_text:
@@ -611,7 +653,7 @@ class ApplicationService:
                     detail={"source": diagnosis_source},
                 )
 
-            report_paths = self._render(
+            report_paths = {} if structured else self._render(
                 task_id, workspace, task_spec, ctx, state, verification, evidence, explanation
             )
             artifacts.update(report_paths)
@@ -620,7 +662,7 @@ class ApplicationService:
             try:
                 from ..runtime.model_client import usage_snapshot
 
-                usage = usage_snapshot()
+                usage = {"calls":0, "total_tokens":0, "duration_s":0} if structured else usage_snapshot()
                 state.version_set["llm_usage"] = (
                     f"calls={usage['calls']} tokens={usage['total_tokens']} "
                     f"duration={usage['duration_s']}s"
@@ -639,10 +681,10 @@ class ApplicationService:
             try:
                 from ..runtime.model_client import trace_since, trace_summary
 
-                records = trace_since(llm_trace_mark) if llm_trace_mark is not None else []
+                records = trace_since(llm_trace_mark) if not structured and llm_trace_mark is not None else []
                 trace_doc = {
                     "task_id": task_id,
-                    "summary": trace_summary(records),
+                    "summary": {"calls":0} if structured else trace_summary(records),
                     "records": records,
                     "note": (
                         "LLM 本次任务的原文级留痕。每条含 purpose（用途）、prompt_digest"

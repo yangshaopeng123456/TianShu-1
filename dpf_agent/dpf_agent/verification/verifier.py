@@ -151,7 +151,24 @@ class Verifier:
         ls = result.loss_summary
         residual_pu: float | None = None
         balance_ok = False
-        if _num_ok(ss.total_generation_kw) and _num_ok(ss.total_load_kw) and _num_ok(ls.total_loss_kw):
+        passive_boundary = ss.passive_power_boundary
+        boundary_values = None
+        if passive_boundary is not None:
+            from ..domain.passive_power_balance import validate_passive_power_boundary
+            try:
+                boundary_values = validate_passive_power_boundary(passive_boundary)
+            except (ValueError, TypeError, KeyError, AttributeError, OverflowError):
+                pass
+            checks.append(CheckResult(check_id="native_passive_power_boundary", domain="power_balance",
+                passed=boundary_values is not None,
+                detail="完整原生被动PD库存与逐端导体P/Q独立重加；已含映射Gs/Bs，原Circuit.Losses保持" if boundary_values is not None
+                else "完整原生被动PD功率边界缺失或未核验，禁止当作零功率"))
+        if boundary_values is not None and _num_ok(ss.total_generation_kw) and _num_ok(ss.total_load_kw):
+            if all(_num_ok(value) for value in (ss.total_generator_kw, ss.total_storage_kw)):
+                residual_kw = abs(ss.total_generation_kw - ss.total_load_kw + ss.total_generator_kw - ss.total_storage_kw - boundary_values[0])
+                residual_pu = residual_kw / max(abs(ss.total_load_kw), abs(ss.total_generator_kw), abs(boundary_values[0]), 1.0)
+                balance_ok = residual_pu <= self.defaults.power_balance_tol_rel
+        elif passive_boundary is None and _num_ok(ss.total_generation_kw) and _num_ok(ss.total_load_kw) and _num_ok(ls.total_loss_kw):
             gen_elem_kw = ss.total_generator_kw if _num_ok(ss.total_generator_kw) else 0.0
             # 缺该字段时按 0 处理：老产物（口径修复前）本就不含储能项，行为不变。
             storage_net_kw = ss.total_storage_kw if _num_ok(ss.total_storage_kw) else 0.0
@@ -178,6 +195,16 @@ class Verifier:
                 tolerance=self.defaults.power_balance_tol_rel,
             )
         )
+        if passive_boundary is not None:
+            q_residual = None
+            if boundary_values is not None and all(_num_ok(value) for value in (ss.total_generation_kvar,
+                    ss.total_load_kvar, ss.total_generator_kvar, ss.total_storage_kvar)):
+                q_residual = abs(ss.total_generation_kvar - ss.total_load_kvar + ss.total_generator_kvar
+                    - ss.total_storage_kvar - boundary_values[1]) / max(abs(ss.total_load_kvar), abs(ss.total_generator_kvar), abs(boundary_values[1]), 1.0)
+            checks.append(CheckResult(check_id="power_balance_reactive", domain="power_balance",
+                passed=q_residual is not None and q_residual <= self.defaults.power_balance_tol_rel,
+                detail=f"完整被动端口净无功边界 residual={q_residual:.6f} pu" if q_residual is not None else "无功平衡完整字段或边界缺失",
+                measured=q_residual, tolerance=self.defaults.power_balance_tol_rel))
 
         # 6. 格式转换保真度：转换模型求解成功不等于原始格式等价复现。
         #    native DSS 可继续作为正式结果；转换来源至少明确标为受限/待交叉核验。
@@ -242,6 +269,23 @@ class Verifier:
                       "result_status_by_scope"):
             if getattr(first, field) != getattr(second, field):
                 diffs.append(field)
+        valid_boundaries = {}
+        for label, result in (("first", first), ("second", second)):
+            if result.system_summary.passive_power_boundary is not None:
+                from ..domain.passive_power_balance import validate_passive_power_boundary
+                try:
+                    valid_boundaries[label] = validate_passive_power_boundary(result.system_summary.passive_power_boundary)
+                except (ValueError, TypeError, KeyError, AttributeError, OverflowError):
+                    diffs.append(label + ".passive_power_boundary")
+        left_boundary, right_boundary = first.system_summary.passive_power_boundary, second.system_summary.passive_power_boundary
+        if (left_boundary is None) != (right_boundary is None):
+            diffs.append("passive_power_boundary.contract")
+        elif left_boundary is not None and right_boundary is not None and len(valid_boundaries) == 2:
+            left_objects = {obj["object_id"]:obj for obj in left_boundary.get("objects", [])}
+            right_objects = {obj["object_id"]:obj for obj in right_boundary.get("objects", [])}
+            if left_objects.keys() != right_objects.keys() or any((left_objects[name].get("enabled"), left_objects[name].get("num_terminals"), left_objects[name].get("num_conductors"))
+                    != (right_objects[name].get("enabled"), right_objects[name].get("num_terminals"), right_objects[name].get("num_conductors")) for name in left_objects.keys() & right_objects.keys()):
+                diffs.append("passive_power_boundary.inventory")
 
         # 功率接近零时使用全网功率规模给出绝对容差，避免近零无功的相对误差发散。
         power_scale = max([1.0] + [
@@ -270,6 +314,20 @@ class Verifier:
             if len(a) != len(left) or len(b) != len(right) or a.keys() != b.keys():
                 diffs.append(f"{label}.identities")
             return a, b
+
+        if len(valid_boundaries) == 2:
+            for suffix, index in (("kw", 0), ("kvar", 1)):
+                number("passive_power_boundary.total_" + suffix, valid_boundaries["first"][index], valid_boundaries["second"][index], power_abs_tol)
+            for name in left_objects.keys() & right_objects.keys():
+                a_ports = {(row["terminal"],row["conductor"]):row for row in left_objects[name]["terminal_conductors"]}
+                b_ports = {(row["terminal"],row["conductor"]):row for row in right_objects[name]["terminal_conductors"]}
+                if a_ports.keys() != b_ports.keys():
+                    diffs.append("passive_power_boundary." + name + ".ports")
+                for port in a_ports.keys() & b_ports.keys():
+                    if a_ports[port].get("node") != b_ports[port].get("node"):
+                        diffs.append("passive_power_boundary." + name + ".node")
+                    for field in ("powers_kw", "powers_kvar"):
+                        number("passive_power_boundary." + name + "." + str(port) + "." + field, a_ports[port][field], b_ports[port][field], power_abs_tol)
 
         buses1, buses2 = objects("bus", first.bus_results, second.bus_results)
         for name in buses1.keys() & buses2.keys():

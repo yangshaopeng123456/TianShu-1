@@ -6,7 +6,7 @@
    却对外答「三相不平衡潮流求解（不能做）」——这是对外说错话。
 2. **报告必须声明本次求解口径**：三相建模方式、控制行为、负荷模型（含 OpenDSS
    默认 Vminpu=0.95 的隐性转恒阻抗）、无功限值是否施加、限值来源、未包含项。
-3. **转换类算例必须显式声明"平衡三相等值"**，不能与原生 .dss 的结果混为一谈。
+3. **转换类算例必须声明实际建模口径**：显式分相或默认平衡等值，不能混为一谈。
 
 运行：python -m dpf_agent.tests.test_report_caliber
 """
@@ -110,6 +110,13 @@ def main() -> int:
     check("① 能力回答给出不平衡度定义（对称分量法）", "对称分量" in ans and "U₂" in ans)
     check("① 能力回答声明限值待核对", "GB/T 15543" in ans and "核对" in ans)
     check("① 能力回答区分原生/转换算例", "原生" in ans and "转换" in ans)
+    check("① 能力回答区分显式相别与无相别默认模型",
+          "有相别时按输入相别建模" in ans and "没有相别时" in ans
+          and "平衡三相等值模型" in ans, ans[-280:])
+    check("① 能力回答不再否认已实现的表格相别映射",
+          "不会被保留" not in ans and "零序参数" in ans)
+    check("① 分相能力仍声明连续相移正序边界与参考限值",
+          "连续相移" in ans and "平衡正序" in ans and "2% 是参考值" in ans)
     # 通用能力清单里也不得把三相不平衡列为「不做」。
     # 注意：只取「暂不支持」段内的条目（到第一个空行为止）——
     # 「能做」段是刻意包含三相不平衡的（说明它能算）。
@@ -720,6 +727,15 @@ def main() -> int:
             "你有 N-1 能力吗": "n1",
             "算例出错能定位吗": "diagnosis",
             "支持哪些算例格式": "case_loading",
+            "MATPOWER 能执行 Q 限值吗": "q_limits",
+            "PVSystem 的 Qmax 有什么限制": "q_limits",
+            "支持 ENFORCE_Q_LIMITS 吗": "q_limits",
+            "MATPOWER 能做 PV → PQ 外层迭代吗": "pv_pq_switching",
+            "PVSystem 支持 PV/PQ 切换吗": "pv_pq_switching",
+            "能根据 Qmax 做 PV 转 PQ 吗": "pv_pq_switching",
+            "MATPOWER 能做无功优化吗": "auto_control",
+            "PVSystem 能优化无功吗": "auto_control",
+            "你支持无功吗": "q_limits",
         }
         _wrong = [(q, _caps.match(q).key if _caps.match(q) else None, want)
                   for q, want in _cases.items()
@@ -737,6 +753,36 @@ def main() -> int:
         _sup = {e.key for e in _caps.entries() if e.status in ("supported", "conditional")}
         _uns = {e.key for e in _caps.entries() if e.status in ("not_supported", "research_only")}
         check("⑫ 同一能力不会同时出现在「能做」与「暂不支持」", not (_sup & _uns))
+        check("⑫ 静态Q策略有条件支持，通用PV/PQ与自动控制仍不支持",
+              _caps.get("q_limits").status == "conditional"
+              and _caps.get("pv_pq_switching").status == "not_supported"
+              and _caps.get("auto_control").status == "not_supported")
+        _q_answer = _Capability_inquiry_answer("MATPOWER支持Q限值吗", {})
+        check("⑫ Q策略回答限定转换路径与完整输入",
+              "表格 / MATPOWER 转换路径" in _q_answer
+              and "任意原生 `.dss`" in _q_answer
+              and "ENFORCE_Q_LIMITS=1" in _q_answer
+              and "完整输入" in _q_answer and "非 Slack" in _q_answer)
+        check("⑫ Q策略保留默认模式与设备容量边界",
+              "默认非强制" in _q_answer and "显式容量在非强制模式也生效" in _q_answer
+              and "不代表设备真实铭牌容量" in _q_answer
+              and "理想 Slack" in _q_answer and "非零 P-Q" in _q_answer)
+        _switch_answer = _Capability_inquiry_answer("支持PV→PQ吗", {})
+        check("⑫ PV/PQ外循环回答保留真实受限恢复、不宣称通用切换",
+              "暂不支持" in _switch_answer and "不支持通用 PV/PQ 外层迭代" in _switch_answer
+              and "受限未收敛恢复" in _switch_answer
+              and "`Model=3`" in _switch_answer and "`Model=1`" in _switch_answer
+              and "记录模型变化" in _switch_answer)
+        for _question in ("支持无功吗", "支持MATPOWER无功优化吗", "PVSystem能优化无功吗"):
+            _reactive_answer = _Capability_inquiry_answer(_question, {})
+            check(f"⑫ 无功问答不把静态能力冒充自动优化：{_question}",
+                  "不支持自动无功优化" in _reactive_answer
+                  or ("暂不支持" in _reactive_answer and "不执行" in _reactive_answer
+                      and "无功优化" in _reactive_answer))
+        check("⑫ 总览把静态Q策略列在支持范围，通用PV/PQ仍列不支持",
+              _caps.get("q_limits").title in _supported_text
+              and _caps.get("q_limits").title not in cannot_text
+              and _caps.get("pv_pq_switching").title in cannot_text)
 
         # 回答层：能力问询返回的每一段都必须带状态词，不能只说一段介绍
         _ans = _Capability_inquiry_answer("支持储能吗", {})

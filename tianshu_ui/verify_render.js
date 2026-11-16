@@ -1,96 +1,70 @@
-// 用 Node + mock DOM 验证 app.js 的渲染逻辑（不依赖 Electron GUI）
-const vm = require('vm');
-const fs = require('fs');
-const path = require('path');
-
-function makeEl() {
-  const s = new Set();
-  return {
-    onclick: null, innerHTML: '', textContent: '', dataset: {}, value: '', style: {},
-    classList: {
-      add: (c) => s.add(c), remove: (c) => s.delete(c),
-      contains: (c) => s.has(c),
-      toggle: (c, f) => { (f === undefined ? !s.has(c) : f) ? s.add(c) : s.delete(c); },
-    },
-    querySelectorAll: () => [], querySelector: () => makeEl(),
-  };
+// 真实renderer函数的受控DOM/异步回归；不启动服务、不读取用户配置、不联网。
+const vm=require('vm'),fs=require('fs'),path=require('path'),assert=require('assert/strict');
+const fullSource=fs.readFileSync(path.join(__dirname,'renderer/app.js'),'utf8');
+const source=fullSource.slice(0,fullSource.indexOf('// 状态栏不是装饰'));
+const deferred=()=>{let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});return{promise,resolve,reject};};
+const flush=async()=>{for(let i=0;i<20;i++)await Promise.resolve();};
+function harness(){
+  const elements=new Map(),actions=new Map(),timers=new Map(),requests=[],saved=[];
+  let nextTimer=0,backend=null,restart=async()=>({reused:false}),openLogs=async()=>({ok:true});
+  const ready={backend_version:'fixture-backend',checks:{model:{ok:false,enabled:false,configured:true},engine:{ok:true,backend:'com',detail:'OpenDSS COM 已注册'},sidecar:{ok:true,detail:'本次HTTP可达'},storage:{ok:true,detail:'目录可写'},skills:{ok:true,detail:'8个工具已加载'},knowledge:{ok:false,detail:'未启用'},license:{ok:true,detail:'Apache-2.0及第三方许可说明'}}};
+  const storage={total_human:'1 KB',total_files:1,dirs:[{name:'outputs',path:'C:/fixture/outputs',file_count:1,size_bytes:1024}],db:{path:'C:/fixture/chat.db',size_bytes:0},groups:{},sizes:{},advice:{},never_touch:['会话数据库'],aux_dirs:[],kept:{}};
+  function el(id){if(!elements.has(id)){let html='';const listeners={},classes=new Set();elements.set(id,{id,value:'',textContent:'',disabled:false,tagName:'INPUT',style:{},dataset:{},writes:0,get innerHTML(){return html;},set innerHTML(v){html=v;this.writes++;},classList:{add:c=>classes.add(c),remove:c=>classes.delete(c),contains:c=>classes.has(c),toggle(c,v){(v===undefined?!classes.has(c):v)?classes.add(c):classes.delete(c);}},querySelector:()=>null,querySelectorAll:()=>[],addEventListener(name,fn){listeners[name]=fn;},async fire(name='click'){return listeners[name]?.({target:this});},remove(){},scrollIntoView(){}});}return elements.get(id);}
+  const document={getElementById:el,querySelectorAll:selector=>actions.get(selector)||[],querySelector:()=>null,createElement:()=>el('created'),body:{appendChild(){}}};
+  const tianshu={minimize(){},maximize(){},close(){},getAppInfo:async()=>({appVersion:'fixture-ui',backendCodeVersion:'fixture-code',author:'yangshaopeng',license:'Apache-2.0',backend:{ownership:'external',base:'http://127.0.0.1:8000'},logs:{available:true}}),saveSettings:async patch=>saved.push({...patch}),restartBackend:(...a)=>restart(...a),openLogsDirectory:(...a)=>openLogs(...a),apiRequest:async(_method,url)=>{requests.push(url);if(backend)return backend(url);if(url==='/api/ready')return ready;if(url==='/api/storage')return storage;if(url==='/api/task-progress')return{active:false};if(url.startsWith('/api/recent-tasks'))return{tasks:[]};if(url==='/api/rag/status')return{enabled:false,ready:false,num_sources:0,num_chunks:0,power_rag:{enabled:false}};if(url==='/api/models'||url.startsWith('/api/local-models'))return{ok:true,models:['fixture-model']};throw new Error('fixture unavailable');}};
+  const context={window:{tianshu,document,localStorage:{getItem:()=>null,setItem(){}}},document,console,URL,setTimeout(fn,ms){timers.set(++nextTimer,{fn,ms});return nextTimer;},clearTimeout:id=>timers.delete(id)};
+  vm.createContext(context);vm.runInContext(source,context);const run=code=>vm.runInContext(code,context),state=run('state');
+  function form(mode='cloud'){state.llmMode=mode;state.llmCloudBaseUrl='https://fixture.invalid/v1';state.llmCloudModel='fixture-cloud';state.llmLocalModel='fixture-local';state.llmOllamaUrl='http://localhost:11434/v1';state.llmApiKey='fixture-key';state.llmApiKeySet=true;state.llmBaseUrl=mode==='local'?state.llmOllamaUrl:state.llmCloudBaseUrl;state.llmModel=mode==='local'?state.llmLocalModel:state.llmCloudModel;el('m-model').value=state.llmModel;el('m-url').value=state.llmCloudBaseUrl;el('m-apikey').value=state.llmApiKey;el('m-ollama-url').value=state.llmOllamaUrl;run("currentPage='config';currentSub='model';_lastSavedModelPatch={...state}");}
+  return{context,run,state,el,actions,requests,saved,timers,ready,storage,form,setBackend:fn=>backend=fn,setRestart:fn=>restart=fn,setOpenLogs:fn=>openLogs=fn};
 }
-const els = {};
-const document = {
-  getElementById: (id) => (els[id] || (els[id] = makeEl())),
-  querySelectorAll: () => [],
-  querySelector: () => makeEl(),
-};
-let storageAvailable = true;
-// 与 /api/storage 的响应结构一致，验证当前的盘点及归档界面。
-const storageSnapshot = {
-  total_human: '1 KB', total_files: 1, total_bytes: 1024,
-  db: { path: 'chat_data/chat.db', size_bytes: 1024 }, dirs: [], aux_dirs: [], aux_bytes: 0,
-  groups: {}, counts: {}, sizes: {}, advice: {}, kept: {},
-  never_touch: ['chat_data/uploads/ 中的算例原件', 'chat_data/chat.db'],
-};
-const window = {
-  tianshu: {
-    minimize(){}, maximize(){}, close(){}, isMaximized(){ return false; }, onMaximizeChange(){},
-    getSettings: async () => ({}),
-    apiRequest: async (_method, url) => {
-      if (url === '/api/storage' && storageAvailable) return storageSnapshot;
-      throw new Error('mock backend unavailable');
-    },
-  },
-  document,
-};
-
-const code = fs.readFileSync(path.join(__dirname, 'renderer', 'app.js'), 'utf8');
-const sandbox = { window, document, console, setTimeout, clearTimeout };
-vm.createContext(sandbox);
-try {
-  vm.runInContext(code, sandbox);
-} catch (e) {
-  console.log('执行 app.js 异常:', e.message);
-  process.exit(1);
-}
-
-const checks = [
-  ['overview', sandbox.pageOverview, ['就绪度', '配置完成度', '一键环境检测']],
-  // 沙箱里 state.llmMode 默认 cloud → 默认模型名 qwen-plus；改用 mode 后字段变成「连接方式」
-  ['model', sandbox.pageModel, ['基础配置', '连接方式', '云端 API', '本地 Ollama', 'qwen-plus', '能力检测']],
-  ['engine', sandbox.pageEngine, ['OpenDSS', '引擎注册表', '引擎 × 能力矩阵', 'dss-python']],
-  ['sidecar', sandbox.pageSidecar, ['Sidecar 运行状态', '重启 Sidecar']],
-  ['budget', sandbox.pageBudget, ['分析深度', '求解器调用数', '高级与管理员模式']],
-  ['policy', sandbox.pagePolicy, ['默认任务模板', '用户硬约束', '验真策略']],
-  ['skills', sandbox.pageSkills, ['load_case', 'run_powerflow', 'verify_power_balance', '8 个标准工具']],
-  ['knowledge', sandbox.pageKnowledge, ['RAG 知识库', '重建索引', 'Power-RAG', 'Skill 演化']],
-  ['storage', sandbox.pageStorage, ['chat_data', '归档选中项', '重新盘点', '不可清理项']],
-  ['report', sandbox.pageReport, ['Markdown / JSON', '报告内容项']],
-  ['logs', sandbox.pageLogs, ['日志与可观测性', '导出脱敏诊断包']],
-  ['appearance', sandbox.pageAppearance, ['通知与外观', '浅色', '深色']],
-  ['security', sandbox.pageSecurity, ['Windows 安全存储', 'API Key']],
-  ['about', sandbox.pageAbout, ['版本信息', '软件版本', '恢复默认配置']],
-  ['workbench', sandbox.pageWorkbench, ['会话队列', '执行过程', 'chat-messages', 'chat-input', 'trace-steps', 'stop-task']],
-  // 无后端时走"还没跑过任务"空态；有真实任务时才渲染 工程结论/多引擎证据分层/模块贡献
-  ['results', sandbox.pageResults, ['结果展示', '还没有跑过任务', '分析工作台']],
-];
-
-let fail = 0;
-(async () => {
-for (const [name, fn, keywords] of checks) {
-  let html = '';
-  try { html = await fn(); } catch (e) { console.log(`  [FAIL] ${name}: 抛异常 ${e.message}`); fail++; continue; }
-  if (html == null || typeof html !== 'string') { console.log(`  [SKIP] ${name}: 返回非字符串（需 mock api）`); continue; }
-  const missing = keywords.filter((k) => !html.includes(k));
-  const ok = html.length > 100 && missing.length === 0;
-  if (!ok) { console.log(`  [FAIL] ${name}: 缺 ${missing.join(',')} 或内容过短(${html.length})`); fail++; }
-  else console.log(`  [OK]   ${name} (${html.length} 字符)`);
-}
-storageAvailable = false;
-vm.runInContext('_storageCache.data = null', sandbox);
-const storageError = await sandbox.pageStorage();
-if (storageError.includes('盘点失败：mock backend unavailable') && storageError.includes('storage-rescan')) {
-  console.log('  [OK]   storage offline error and retry');
-} else {
-  console.log('  [FAIL] storage offline: 缺盘点失败原因或重试按钮'); fail++;
-}
-console.log('\n结果: ' + (fail === 0 ? '全部通过' : fail + ' 个失败'));
-process.exit(fail === 0 ? 0 : 1);
-})();
+const tests=[],test=(name,run)=>tests.push({name,run});
+test('六配置页与工作台/结果空态渲染，无失实占位控件',async()=>{const h=harness(),pages=[['pageOverview',['环境状态','刷新环境状态']],['pageModel',['基础配置','连接方式','自动保存','未加密']],['pageSkills',['8个标准工具','load_case','同一引擎']],['pageKnowledge',['重建索引','BM25','Power-RAG']],['pageStorage',['归档选中项','重新盘点','不可清理项']],['pageAbout',['fixture-ui','fixture-code','复用外部后端','打开应用日志目录']],['pageWorkbench',['chat-input','stop-task','执行过程']],['pageResults',['还没有跑过任务','计算 case4']]];assert.equal(h.run('Object.keys(PAGE_RENDER).length'),6);for(const[fn,keywords]of pages){const html=await h.context[fn]();for(const word of keywords)assert.ok(html.includes(word),`${fn}: ${word}`);assert.ok(!/data-save-action|导入配置|Skill 演化|独立V2|检查更新|恢复默认配置/.test(html),fn);}for(const removed of ['engine','sidecar','budget','policy','report','logs','appearance','security'])assert.equal(h.run(`PAGE_RENDER.${removed}`),undefined);});
+test('存储失败保留原因和重试；目录来自真实响应',async()=>{const h=harness();assert.ok((await h.context.pageStorage()).includes('C:/fixture/outputs'));h.run('_storageCache.data=null');h.setBackend(()=>Promise.reject(new Error('fixture disk offline')));const html=await h.context.pageStorage();assert.ok(html.includes('fixture disk offline')&&html.includes('storage-rescan'));});
+test('初始失败→轮询就绪只更新总览区域，相同快照不重绘',async()=>{const h=harness();h.setBackend(()=>Promise.reject(new Error('startup refused')));await assert.rejects(h.context.fetchReadySnapshot(),/startup refused/);assert.ok((await h.context.pageOverview()).includes('startup refused'));h.el('page-body').innerHTML='keep-navigation';h.setBackend(url=>url==='/api/ready'?h.ready:url==='/api/task-progress'?{active:false}:{tasks:[]});await h.context.refreshStatusBar();const region=h.el('overview-ready-region');assert.ok(region.innerHTML.includes('本次HTTP可达'));assert.ok(!region.innerHTML.includes('startup refused'));assert.equal(h.el('page-body').innerHTML,'keep-navigation');const writes=region.writes;await h.context.refreshStatusBar();assert.equal(region.writes,writes);});
+test('就绪→断开→恢复，不遗留旧成功状态',async()=>{const h=harness();await h.context.fetchReadySnapshot();h.setBackend(()=>Promise.reject(new Error('disconnected')));await assert.rejects(h.context.fetchReadySnapshot({force:true}),/disconnected/);assert.ok(h.el('overview-ready-region').innerHTML.includes('disconnected'));h.setBackend(url=>url==='/api/ready'?h.ready:{});await h.context.fetchReadySnapshot({force:true});assert.ok(!h.el('overview-ready-region').innerHTML.includes('disconnected'));});
+test('在途刷新可等待同一Promise，后端代次变化拒收旧响应',async()=>{const h=harness(),old=deferred(),fresh=deferred();let n=0;h.setBackend(()=>++n===1?old.promise:fresh.promise);const first=h.context.fetchReadySnapshot({force:true});assert.equal(first,h.context.fetchReadySnapshot({force:true}));await flush();h.context.invalidateReadySnapshot();const second=h.context.fetchReadySnapshot({force:true});await flush();fresh.resolve({...h.ready,backend_version:'new'});await second;old.resolve({...h.ready,backend_version:'old'});await first;assert.equal(h.run('_overviewCache.data.backend_version'),'new');});
+test('切离总览后不覆盖当前页面/草稿，禁用模型不当故障',async()=>{const h=harness(),d=deferred();h.setBackend(()=>d.promise);const p=h.context.fetchReadySnapshot();h.run("currentPage='workbench'");h.el('page-body').innerHTML='workbench';h.el('chat-input').value='unsent';d.resolve(h.ready);await p;assert.equal(h.el('page-body').innerHTML,'workbench');assert.equal(h.el('chat-input').value,'unsent');assert.equal(h.run("readyCheck('model').label"),'未启用');});
+test('仅切模式即保存，保留切换前草稿及另一模式Key',async()=>{const h=harness();h.form();h.el('m-apikey').value='fixture-edited';await h.context.switchModelMode('local');assert.equal(h.saved.at(-1).llmMode,'local');assert.equal(h.saved.at(-1).llmApiKey,'fixture-edited');assert.equal(h.saved.at(-1).llmBaseUrl,'http://localhost:11434/v1');assert.equal(h.saved.at(-1).llmModel,'fixture-local');assert.equal(h.state.llmApiKey,'fixture-edited');});
+test('清空Key保存空串且清状态；本地保存不清云端Key',async()=>{const h=harness();h.form();h.state.busy=true;h.el('m-apikey').value='';h.context.scheduleModelAutoSave();await h.context.autoSaveModelConfig();assert.equal(h.saved.at(-1).llmApiKey,'');assert.equal(h.state.llmApiKeySet,false);assert.ok(h.context.credentialInfoHtml().includes('未配置'));h.form('local');h.el('m-model').value='fixture-next';h.context.scheduleModelAutoSave();await h.context.autoSaveModelConfig();assert.equal(Object.hasOwn(h.saved.at(-1),'llmApiKey'),false);assert.equal(h.state.llmApiKey,'fixture-key');});
+test('执行中仅保存，空闲才重启，外部后端不冒充已应用',async()=>{const h=harness();h.form();let n=0;h.setRestart(async()=>{n++;return{reused:true};});h.state.busy=true;h.el('m-model').value='fixture-next';h.context.scheduleModelAutoSave();await h.context.autoSaveModelConfig();assert.equal(n,0);assert.equal(h.run('_modelApplyState'),'pending');h.state.busy=false;await h.context.applyPendingBackendRestart();assert.equal(n,1);assert.equal(h.run('_modelApplyState'),'external');assert.ok(h.run('_modelStatus.text').includes('外部后端未应用'));});
+test('保存失败与应用失败区分，不写成功',async()=>{const h=harness();h.form();h.el('m-model').value='fixture-next';h.context.scheduleModelAutoSave();h.context.window.tianshu.saveSettings=async()=>{throw new Error('write denied');};await assert.rejects(h.context.autoSaveModelConfig(),/write denied/);assert.equal(h.run('_modelApplyState'),'save-failed');h.context.window.tianshu.saveSettings=async patch=>h.saved.push({...patch});h.setRestart(async()=>{throw new Error('restart denied');});await h.context.autoSaveModelConfig();assert.equal(h.run('_modelApplyState'),'apply-failed');assert.ok(h.run('_modelStatus.text').includes('已保存，应用失败'));});
+test('连续编辑串行保存最后值，旧保存不覆盖新草稿或抢先重启',async()=>{const h=harness(),d=deferred();h.form();let writes=0,restarts=0;h.context.window.tianshu.saveSettings=async patch=>{h.saved.push({...patch});if(++writes===1)await d.promise;};h.setRestart(async()=>{restarts++;return{reused:false};});h.el('m-model').value='first';h.context.scheduleModelAutoSave();const first=h.context.autoSaveModelConfig();await flush();h.el('m-model').value='last';h.context.scheduleModelAutoSave();const last=h.context.autoSaveModelConfig();d.resolve();await Promise.all([first,last]);assert.equal(h.saved.at(-1).llmModel,'last');assert.equal(h.state.llmModel,'last');assert.equal(restarts,1);});
+test('当前模式探测列表而非推理，旧模式迟到列表不回灌',async()=>{const h=harness();h.form('local');const result=await h.context.testModelConnection();assert.ok(result.includes('本地模型列表可达')&&result.includes('未执行推理'));assert.ok(h.requests.some(url=>url.startsWith('/api/local-models?')));assert.ok(!h.requests.includes('/api/models'));const d=deferred();h.setBackend(()=>d.promise);const old=h.context.fetchModels(true,'local');h.state.llmMode='cloud';h.run('_modelFetchRevision+=1;_modelCache.models=[]');d.resolve({ok:true,models:['old-local']});await old;assert.ok(!h.run('_modelCache.models').includes('old-local'));});
+test('模型字段异步替换重绑保存事件，保留等待期间新输入',async()=>{const h=harness(),d=deferred();h.form();h.setBackend(()=>d.promise);const p=h.context.refreshModelField(true);h.el('m-model').value='typed-while-waiting';d.resolve({ok:true,models:['fixture-model']});await p;assert.ok(h.el('model-field-slot').innerHTML.includes('typed-while-waiting'));await h.el('m-model').fire('input');assert.equal(h.run('_modelApplyState'),'draft');});
+test('固定日志IPC失败如实反馈，删除路由回到总览',async()=>{const h=harness();let n=0;const button=h.el('open-logs');h.actions.set('[data-config-action="open-logs"]',[button]);h.run("currentSub='about'");h.context.bindConfigActions();h.setOpenLogs(async()=>{n++;return{ok:false,error:'fixture missing directory'};});await button.fire();assert.equal(n,1);assert.ok(h.el('toast').textContent.includes('fixture missing directory'));assert.equal(button.disabled,false);h.run("currentSub='engine';route()");await flush();assert.equal(h.run('currentSub'),'overview');});
+test('真实结果报告与指标保留，删除V2/贡献/规划占位',async()=>{const h=harness();h.run("findLatestTask=async()=>({task_id:'fixture-task',task_status:'success',report_url:'http://127.0.0.1:8000/report',content:'',sessionId:'fixture-session'})");const html=await h.context.pageResults();assert.ok(html.includes('fixture-task')&&html.includes('查看完整报告')&&html.includes('关键指标'));assert.ok(!/多引擎证据分层|模块贡献|独立复算引擎|后 6 个页签/.test(html));});
+test('编辑后撤回磁盘保存值恢复状态，不写盘/重启且允许检查连接',async()=>{
+  const h=harness();h.form();let restarts=0;h.setRestart(async()=>{restarts++;return{reused:false};});h.el('m-model').value='temporary';h.context.scheduleModelAutoSave();h.el('m-model').value='fixture-cloud';h.context.scheduleModelAutoSave();await h.context.autoSaveModelConfig();assert.equal(h.run('_modelApplyState'),'unchanged');assert.equal(h.saved.length,0);assert.equal(restarts,0);assert.ok((await h.context.testModelConnection()).includes('云端模型列表可达'));
+});
+test('撤回草稿不会把既有pending/external/apply-failed状态伪装成功',async()=>{
+  for(const status of ['pending','external','apply-failed']){const h=harness();h.form();h.run(`setModelApplicationState('${status}','warn','fixture-${status}')`);h.el('m-model').value='temporary';h.context.scheduleModelAutoSave();h.el('m-model').value='fixture-cloud';h.context.scheduleModelAutoSave();await h.context.autoSaveModelConfig();assert.equal(h.run('_modelApplyState'),status);assert.equal(h.saved.length,0);}
+});
+test('未应用配置不自动/显式请求模型列表，所属后端应用后才取新模式',async()=>{
+  const h=harness();h.form();h.state.busy=true;await h.context.switchModelMode('local');await flush();await h.context.refreshModelField(true);assert.equal(h.requests.filter(url=>url==='/api/models'||url.startsWith('/api/local-models')).length,0);await assert.rejects(h.context.testModelConnection(),/任务结束/);
+  const button=h.el('refresh-models');h.actions.set('[data-config-action="models-refresh"]',[button]);h.context.bindConfigActions();await button.fire();assert.equal(h.requests.filter(url=>url==='/api/models'||url.startsWith('/api/local-models')).length,0);h.state.busy=false;await h.context.applyPendingBackendRestart();await flush();assert.equal(h.run('_modelApplyState'),'applied');assert.ok(h.requests.some(url=>url.startsWith('/api/local-models?')));assert.ok(!h.requests.includes('/api/models'));
+});
+test('保存/后端代次改变时旧同模式列表也不能覆盖缓存',async()=>{
+  for(const change of ['_modelSaveRevision+=1','invalidateReadySnapshot()']){const h=harness(),d=deferred();h.form();h.setBackend(()=>d.promise);const p=h.context.fetchModels(true,'cloud');h.run(change);d.resolve({ok:true,models:['obsolete-model']});await p;assert.ok(!h.run('_modelCache.models').includes('obsolete-model'));}
+});
+test('后端报告其他会话运行中时不重启，日志打开成功有实际反馈',async()=>{
+  const h=harness();h.form();h.setBackend(url=>url==='/api/task-progress'?{active:true}:h.ready);let restarts=0;h.setRestart(async()=>{restarts++;return{reused:false};});h.el('m-model').value='next';h.context.scheduleModelAutoSave();await h.context.autoSaveModelConfig();assert.equal(restarts,0);assert.equal(h.run('_modelApplyState'),'pending');const button=h.el('logs-success');h.actions.set('[data-config-action="open-logs"]',[button]);h.run("currentSub='about'");h.context.bindConfigActions();await button.fire();assert.ok(h.el('toast').textContent.includes('已打开应用日志目录'));
+});
+test('知识刷新/存储盘点归档的迟到回调不重建新页或清草稿',async()=>{
+  for(const action of ['kb-refresh','storage-rescan','storage-archive']){
+    const h=harness(),d=deferred(),button=h.el(action);h.run(`currentPage='config';currentSub='${action==='kb-refresh'?'knowledge':'storage'}'`);h.actions.set(`[data-config-action="${action}"]`,[button]);h.context.window.confirm=()=>true;
+    const item={value:'C:/fixture/candidate',getAttribute:()=> 'legacy_outputs'};h.actions.set('.stg-item:checked',[item]);h.setBackend(url=>url==='/api/rag/ingest?force=true'||url==='/api/storage/archive'||url==='/api/storage'?d.promise:{});h.context.bindConfigActions();const p=button.fire();h.run("currentPage='workbench';routeToken+=1");h.el('page-body').innerHTML='current-workbench';h.el('chat-input').value='draft-kept';d.resolve(action==='kb-refresh'?{num_sources:1,num_chunks:2}:action==='storage-archive'?{moved:[{}],failed:[]}:h.storage);await p;assert.equal(h.el('page-body').innerHTML,'current-workbench',action);assert.equal(h.el('chat-input').value,'draft-kept',action);
+  }
+  const h=harness(),d=deferred();h.run("currentSub='knowledge';SYNC_REGIONS.splice(0,2)");h.setBackend(()=>d.promise);const p=h.context.scanAndRefresh();h.run("currentPage='workbench';routeToken+=1");h.el('page-body').innerHTML='current-workbench';h.el('chat-input').value='draft-kept';d.resolve({ready:true});await p;assert.equal(h.el('page-body').innerHTML,'current-workbench');assert.equal(h.el('chat-input').value,'draft-kept');
+});
+test('业务404或旧代次API失败不污染统一ready健康状态',async()=>{
+  const h=harness(),d=deferred();await h.context.fetchReadySnapshot();h.setBackend(()=>d.promise);const old=h.context.api('/api/cases');h.context.invalidateReadySnapshot();h.context.applyReadySnapshot(h.ready);d.reject(new Error('obsolete offline'));await assert.rejects(old,/obsolete offline/);assert.equal(h.state.apiOnline,true);assert.equal(h.run('_lastApiError'),'');h.setBackend(()=>Promise.reject(new Error('HTTP 404 task missing')));await assert.rejects(h.context.api('/api/tasks/missing'),/404/);assert.equal(h.state.apiOnline,true);assert.equal(h.run("statusState.sidecar.label"),'可达');
+});
+test('后端代次变化后的旧列表不写DOM，也不宣称当前连接通过',async()=>{
+  const h=harness(),d=deferred();h.form();h.setBackend(()=>d.promise);const p=h.context.refreshModelField(true);h.context.invalidateReadySnapshot();h.el('model-field-slot').innerHTML='current-model';d.resolve({ok:true,models:['obsolete']});await p;assert.equal(h.el('model-field-slot').innerHTML,'current-model');
+  const current=deferred();h.setBackend(()=>current.promise);const probe=h.context.testModelConnection();await flush();h.context.invalidateReadySnapshot();current.resolve({ok:true,models:['obsolete']});await assert.rejects(probe,/后端已变化/);
+});
+test('旧配置pending时新配置仍在写盘，轮询不能提前重启并标已应用',async()=>{
+  const h=harness(),d=deferred();h.form();h.state.busy=true;h.el('m-model').value='saved-A';h.context.scheduleModelAutoSave();await h.context.autoSaveModelConfig();h.state.busy=false;let restarts=0;h.setRestart(async()=>{restarts++;return{reused:false};});h.context.window.tianshu.saveSettings=async patch=>{h.saved.push({...patch});await d.promise;};h.el('m-model').value='writing-B';h.context.scheduleModelAutoSave();const saving=h.context.autoSaveModelConfig();await flush();await h.context.applyPendingBackendRestart();assert.equal(restarts,0);assert.equal(h.run('_modelApplyState'),'saving');d.resolve();await saving;assert.equal(restarts,1);assert.equal(h.saved.at(-1).llmModel,'writing-B');
+});
+test('知识检索全关闭明确未启用',async()=>{const h=harness();h.ready.checks.knowledge={ok:false,enabled:false,detail:'两路检索已关闭'};await h.context.fetchReadySnapshot();assert.equal(h.run("readyCheck('knowledge').label"),'未启用');});
+(async()=>{let failed=0;for(const{name,run}of tests){try{await run();console.log(`[OK] ${name}`);}catch(e){failed++;console.error(`[FAIL] ${name}\n${e.stack}`);}}console.log(`结果: ${tests.length-failed}/${tests.length} 通过`);process.exitCode=failed?1:0;})();

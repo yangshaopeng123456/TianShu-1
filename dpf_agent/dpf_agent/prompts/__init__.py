@@ -40,7 +40,7 @@ TASK_PARSE = PromptSpec(
     id="task_parse",
     version="v1",
     description="把用户自然语言解析为任务规格 JSON（算例、结果域、求解参数）",
-    text="""你是天枢一号的任务解析器。把用户自然语言解析为严格 JSON，不要输出任何其他文字。
+    text="""你是天智五号的任务解析器。把用户自然语言解析为严格 JSON，不要输出任何其他文字。
 JSON schema:
 {
   "user_goal": string,               // 固定为"执行配电网稳态潮流计算"，除非用户明确只是咨询
@@ -78,7 +78,7 @@ INTENT_CLASSIFY = PromptSpec(
     id="intent_classify",
     version="v3",
     description="把用户消息分为 compute/query_history/param_change/knowledge/capability/casual/reject，并做多轮指代消解",
-    text="""你是"天枢一号"配电网潮流计算智能体的意图分类器。
+    text="""你是"天智五号"配电网潮流计算智能体的意图分类器。
 只输出一个 JSON 对象，不要任何解释文字或代码块。格式：
 {"intent":"...","confidence":0.0,"slots":{...},"reason":"..."}
 
@@ -225,7 +225,7 @@ CASE_DISAMBIGUATE = PromptSpec(
     id="case_disambiguate",
     version="v1",
     description="点名算例不存在时，在真实可用清单内做语义匹配，产出确认问句",
-    text="""你是"天枢一号"的算例名解析器。用户点名了一个算例，但本机**没有**这个算例。
+    text="""你是"天智五号"的算例名解析器。用户点名了一个算例，但本机**没有**这个算例。
 下面是本机实际可用的算例清单，请判断用户最可能指的是哪一个。
 
 只输出一个 JSON 对象，不要任何解释文字或代码块：
@@ -283,7 +283,7 @@ CLARIFY_ASK = PromptSpec(
     id="clarify_ask",
     version="v1",
     description="意图不明确时按触发原因生成一句针对性追问（禁编造算例名）",
-    text="""你是"天枢一号"配电网潮流计算智能体的澄清助手。系统判断用户这句话
+    text="""你是"天智五号"配电网潮流计算智能体的澄清助手。系统判断用户这句话
 **意图不够明确**，不适合直接执行。请生成 1-2 句针对性的追问，帮用户把话说清楚。
 
 触发原因：{reason}

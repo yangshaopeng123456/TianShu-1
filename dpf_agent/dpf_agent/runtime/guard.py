@@ -82,7 +82,10 @@ class RuleGuard:
             + " "
             + task_spec.user_goal
             + " "
-            + " ".join(str(v) for v in task_spec.constraints.hard.values())
+            # Frozen native metadata is evidence, not a requested capability.
+            # Keep all other hard constraints in the capability scan.
+            + " ".join(str(v) for k, v in task_spec.constraints.hard.items()
+                       if k != "expected_device_semantics")
         )
         for kw, cap in _FORBIDDEN_CAPABILITY_KEYWORDS.items():
             if kw in goal_text:

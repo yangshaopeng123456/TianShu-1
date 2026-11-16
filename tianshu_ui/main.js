@@ -1,4 +1,4 @@
-// 天枢一号 Electron 主进程
+// 天智五号 Electron 主进程
 const { app, BrowserWindow, ipcMain, shell, dialog } = require('electron');
 const { spawn } = require('child_process');
 const fs = require('fs');
@@ -27,6 +27,7 @@ const RESTART_MAX = 4;
 let backendRestartAt = [];
 const SETTINGS_FILE = path.join(app.getPath('userData'), 'settings.json');
 let mainWindow = null;
+let lastBackendReady = null;
 
 function projectRoot() {
   // 开发模式：tianshu_ui 的上一级是 agent；打包模式：resources/backend
@@ -47,7 +48,41 @@ function backendCommand() {
 }
 
 function notify(channel, payload) {
+  if (channel === 'backend:ready') lastBackendReady = payload;
+  if (channel === 'backend:error') lastBackendReady = null;
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, payload);
+}
+
+function appInfo() {
+  let backendCodeVersion = null;
+  try {
+    const source = fs.readFileSync(path.join(projectRoot(), 'dpf_agent', '__init__.py'), 'utf8');
+    backendCodeVersion = source.match(/^__version__\s*=\s*['"]([^'"]+)['"]/m)?.[1] || null;
+  } catch (_) {}
+  const current = backendLifecycle.current;
+  const owned = current && !current.exited && !current.stopRequested;
+  const base = lastBackendReady?.base || current?.base;
+  let endpoint = '';
+  try { endpoint = new URL(base).origin; } catch (_) {}
+  let available = false;
+  try { available = fs.statSync(app.getPath('logs')).isDirectory(); } catch (_) {}
+  return {
+    appVersion: app.getVersion?.() || null,
+    backendCodeVersion,
+    author: 'yangshaopeng', license: 'Apache-2.0',
+    backend: { ownership: owned ? 'owned' : lastBackendReady ? 'external' : 'none', base: endpoint },
+    logs: { available },
+  };
+}
+
+async function openLogsDirectory() {
+  // The renderer cannot supply a path. Only this application's fixed logs folder is opened.
+  try {
+    const folder = app.getPath('logs');
+    if (!fs.statSync(folder).isDirectory()) return { ok: false, error: '应用日志目录不存在' };
+    const error = await shell.openPath(folder);
+    return error ? { ok: false, error: '无法打开应用日志目录' } : { ok: true };
+  } catch (_) { return { ok: false, error: '应用日志目录不存在或无法打开' }; }
 }
 
 function backendLog(message) {
@@ -68,7 +103,7 @@ const backendLifecycle = new BackendLifecycle({
   },
   onProgress: (seconds) => notify('backend:progress', { seconds, message: `正在启动后端服务… 已等待 ${seconds} 秒` }),
   start: (settings) => {
-    notify('backend:progress', { seconds: 0, message: '正在启动天枢一号后端服务…' });
+    notify('backend:progress', { seconds: 0, message: '正在启动天智五号后端服务…' });
     const spec = backendCommand();
     if (!fs.existsSync(spec.cwd)) throw new Error(`找不到后端目录：${spec.cwd}`);
     backendLog(`spec.command=${spec.command} spec.cwd=${spec.cwd}`);
@@ -363,6 +398,8 @@ function stopTaskStream() {
     notify('backend:ready', backend);
     return backend;
   });
+  ipcMain.handle('app:info', () => appInfo());
+  ipcMain.handle('logs:open-directory', () => openLogsDirectory());
   ipcMain.handle('external:open', (_event, url) => shell.openExternal(url));
 
   // 标题栏与状态栏间的窗口控制
@@ -404,7 +441,7 @@ app.whenReady().then(async () => {
     earlyLog(`backend failed: ${err.message}`);
     if (backendLifecycle.closing) return;
     notify('backend:error', err.message);
-    dialog.showErrorBox('天枢一号启动失败', `${err.message}\n\n请检查后端 Python 环境。`);
+    dialog.showErrorBox('天智五号启动失败', `${err.message}\n\n请检查后端 Python 环境。`);
   }
 }).catch((err) => { earlyLog(`whenReady error: ${err.message}`); });
 

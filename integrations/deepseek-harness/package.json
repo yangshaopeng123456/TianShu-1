@@ -1,0 +1,39 @@
+{
+  "name": "@yangshaopeng/tianshu-harness",
+  "version": "0.2.4-acceptance",
+  "description": "天智五号配电网专业工具和Agent模式",
+  "author": "yangshaopeng",
+  "license": "Apache-2.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./index.js",
+    "./bridge": "./lib/bridge.js"
+  },
+  "files": [
+    "index.js",
+    "schemas.js",
+    "prompts",
+    "lib",
+    "service_host.py",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=24",
+    "dsh": "0.2.1-rc.2"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "~4.0.5",
+    "@deepseek-ai/dsh-tools": "0.2.1-rc.2",
+    "@deepseek-ai/schemastery": "~3.18.5"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "dependencies": {
+    "zod": "4.4.3"
+  }
+}

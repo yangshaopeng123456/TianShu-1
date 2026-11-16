@@ -58,8 +58,8 @@ def create_app() -> FastAPI:
     # opendss_adapter 用 importlib 按需导入，无需预加载。
     chat_store.init_db()
     app = FastAPI(
-        title="天枢一号",
-        description="配电网潮流计算智能体“天枢一号”的 Web 服务层（V1.3）",
+        title="天智五号",
+        description="配电网潮流计算智能体“天智五号”的 Web 服务层（V1.3）",
         version=__version__,
     )
     # ⚠️ **注册顺序有语义**：FastAPI 按注册顺序匹配路由。

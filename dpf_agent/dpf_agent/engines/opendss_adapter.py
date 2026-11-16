@@ -84,6 +84,9 @@ class OpenDSSRawResult:
     # 进程启动时间与文件 mtime，绕了很远，还先后误判成"加载了错误的代码树"
     # 和"日志被 info 级吞掉"）。字段自带版本后，一眼可判"这是旧版跑的，重算"。
     collector_version: str = ""
+    power_conversion_elements: list[dict[str, Any]] | None = None
+    power_conversion_elements_coverage: dict[str, Any] | None = None
+    auxiliary_elements: list[dict[str, Any]] | None = None
 
 
 # ============================================================== 元件口径表

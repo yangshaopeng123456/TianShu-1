@@ -1,6 +1,6 @@
 // ============================================================
 // 天枢一号 UI 逻辑：导航路由 + 三页内容渲染
-// 所有内容基于天枢一号真实能力（OpenDSS 引擎、qwen2.5:7b、8 个工具）
+// 配置页仅保留当前可操作功能与实际状态，数值来自后端产物。
 // ============================================================
 
 /* ---------- 窗口控制 ---------- */
@@ -68,28 +68,16 @@ function retireTask(taskId) {
 let _apikeyRevealed = false;
 
 async function api(path, method = 'GET', body = undefined) {
+  const generation = _overviewCache.generation;
+  const endpoint = state.apiBase;
   try {
-    const data = await t.apiRequest(method, path, body);
-    state.apiOnline = true;
-    updateBackendStatus(true);
-    return data;
+    return await t.apiRequest(method, path, body);
   } catch (err) {
-    state.apiOnline = false;
-    updateBackendStatus(false, err.message);
+    if (generation === _overviewCache.generation && endpoint === state.apiBase) _lastApiError = err.message || String(err);
     throw err;
   }
 }
 
-function updateBackendStatus(online, detail = '') {
-  renderStatusItem('sb-sidecar', online ? 'ok' : 'err', online ? 'Sidecar 正常' : 'Sidecar 未连接', detail || 'FastAPI 后端健康检查');
-}
-
-const STATUS_LABELS = {
-  model: ['模型正常', '模型未配置'],
-  engine: ['引擎就绪', '引擎不可用'],
-  sidecar: ['Sidecar 正常', 'Sidecar 未连接'],
-  license: ['许可证有效', '许可证异常'],
-};
 const statusState = {
   model: { level: 'gray', label: '模型检查中…', detail: '' },
   engine: { level: 'gray', label: '引擎检查中…', detail: '' },
@@ -232,37 +220,21 @@ function toggleNotificationPanel() {
 }
 
 async function refreshStatusBar() {
-  if (statusRefreshInFlight) return;
-  statusRefreshInFlight = true;
-  const taskStatusRevision = _taskStatusRevision;
-  try {
-    // 模型配置改过但当时有任务在跑 → 现在空闲了，补做后端重启
+  if (statusRefreshInFlight) return statusRefreshInFlight;
+  const revision = _taskStatusRevision;
+  const generation = _overviewCache.generation;
+  const endpoint = state.apiBase;
+  const pending = (async () => {
     applyPendingBackendRestart().catch(() => {});
-    const results = await Promise.allSettled([
-      api('/api/ready'),
-      api('/api/task-progress'),
-      api('/api/recent-tasks?limit=20'),
-    ]);
-    const ready = results[0].status === 'fulfilled' ? results[0].value : null;
-    const progress = results[1].status === 'fulfilled' ? results[1].value : null;
-    const recent = results[2].status === 'fulfilled' ? results[2].value : null;
-    const checks = ready?.checks || {};
-    for (const key of ['model', 'engine', 'sidecar', 'license']) {
-      const c = checks[key] || {};
-      const level = c.level || (c.ok ? 'ok' : 'warn');
-      const label = c.ok ? STATUS_LABELS[key][0] : STATUS_LABELS[key][1];
-      statusState[key] = { level, label, detail: c.detail || '' };
-      renderStatusItem(`sb-${key}`, level, label, c.detail || '');
-    }
-    if (results[0].status === 'rejected' && results[1].status === 'rejected') {
-      renderStatusItem('sb-sidecar', 'err', 'Sidecar 未连接', results[0].reason?.message || '无法访问后端');
-    }
-    applyRefreshedTaskStatus(progress, recent?.tasks || [], taskStatusRevision);
-    buildNotifications(recent?.tasks || []);
-  } finally {
-    statusRefreshInFlight = false;
-  }
+    const results = await Promise.allSettled([fetchReadySnapshot({ force: true }), api('/api/task-progress'), api('/api/recent-tasks?limit=20')]);
+    if (generation !== _overviewCache.generation || endpoint !== state.apiBase) return;
+    if (results[1].status === 'fulfilled') applyRefreshedTaskStatus(results[1].value, results[2].value?.tasks || [], revision);
+    if (results[2].status === 'fulfilled') buildNotifications(results[2].value?.tasks || []);
+  })();
+  statusRefreshInFlight = pending;
+  try { return await pending; } finally { if (statusRefreshInFlight === pending) statusRefreshInFlight = null; }
 }
+
 function startStatusBarPolling() {
   if (statusRefreshTimer && typeof clearInterval === 'function') clearInterval(statusRefreshTimer);
   refreshStatusBar().catch(() => {});
@@ -272,7 +244,7 @@ function startStatusBarPolling() {
 }
 
 function bindStatusBarActions() {
-  const targets = { model: 'model', engine: 'engine', sidecar: 'sidecar' };
+  const targets = { model: 'model', engine: 'overview', sidecar: 'overview' };
   Object.entries(targets).forEach(([key, sub]) => {
     const el = document.getElementById(`sb-${key}`);
     if (el) el.onclick = () => { currentPage = 'config'; currentSub = sub; route(); };
@@ -321,7 +293,7 @@ document.getElementById('help-modal').onclick = (ev) => {
 };
 
 /* ---------- 增量刷新（用户要的刷新语义）----------
-   首次打开 = 冷启动，加载引擎（20~40s，不可避免）
+   首次打开等待本机后端；求解引擎由任务流程按需加载。
    之后点 🔄 = 先扫描「哪些数据变了」，只重画变了的那一块，不做整页重载
    ------------------------------------------------ */
 const _syncCache = Object.create(null);   // regionId -> 上次见到的数据签名
@@ -334,28 +306,18 @@ function _sig(v) {
 // 再比对签名；只有签名变了才 apply（局部重绘）。
 const SYNC_REGIONS = [
   {
-    id: 'health',
-    label: '后端状态',
-    always: true,                       // 任何页面都查（毫秒级）
-    fetch: () => api('/api/health'),
-    apply: () => { /* api() 内部已自动 updateBackendStatus */ },
-  },
-  {
     id: 'ready',
-    label: '就绪度',
-    visible: () => !!document.getElementById('ready-cards'),
-    fetch: () => api('/api/ready'),
-    apply: (d) => {
-      _overviewCache.data = d;          // 让后续渲染直接用新数据
-      route();                          // 就绪度含 detail 文本，整体重排最稳
-    },
+    label: '环境状态',
+    always: true,                       // 各页面共用同一批就绪快照
+    fetch: () => fetchReadySnapshot({ force: true }),
+    apply: () => {},
   },
   {
     id: 'models',
     label: '模型列表',
     visible: () => !!document.getElementById('model-field-slot'),
-    fetch: () => api('/api/models'),
-    apply: () => refreshModelField(true),
+    fetch: () => fetchModels(true),
+    apply: () => refreshModelField(false),
   },
   {
     id: 'kb',
@@ -376,6 +338,7 @@ async function scanAndRefresh() {
     for (const r of SYNC_REGIONS) {
       const visible = r.always || (typeof r.visible === 'function' && r.visible());
       if (!visible) continue;                       // 不在当前界面 → 跳过，不浪费时间
+      const pageRevision = routeToken;
       let data = null;
       try {
         data = await r.fetch();
@@ -388,6 +351,7 @@ async function scanAndRefresh() {
       if (_syncCache[r.id] === sig) continue;       // 已是最新 → 不动
       _syncCache[r.id] = sig;
       try {
+        if (pageRevision !== routeToken) continue;
         await r.apply(data);
         updated.push(r.label);
       } catch (e) {
@@ -432,24 +396,12 @@ function setCrumb(page, sub) {
    系统配置 — 二级导航树
    ============================================================ */
 const CONFIG_SUBNAV = [
-  { id: 'overview', label: '总览与环境检测', group: null },
-  { id: null, label: '运行环境', group: true },
-  { id: 'model', label: '模型服务', group: '运行环境' },
-  { id: 'engine', label: '计算引擎中心', group: '运行环境' },
-  { id: 'sidecar', label: 'Sidecar 与环境', group: '运行环境' },
-  { id: null, label: '智能体', group: true },
-  { id: 'budget', label: '执行与预算', group: '智能体' },
-  { id: 'policy', label: '安全策略与默认任务合同', group: '智能体' },
-  { id: 'skills', label: 'Skill 能力', group: '智能体' },
-  { id: 'knowledge', label: '知识与经验', group: '智能体' },
-  { id: null, label: '数据', group: true },
-  { id: 'storage', label: '样本与本地存储', group: '数据' },
-  { id: 'report', label: '报告与导出', group: '数据' },
-  { id: 'logs', label: '日志与诊断', group: '数据' },
-  { id: null, label: '软件', group: true },
-  { id: 'appearance', label: '通知与外观', group: '软件' },
-  { id: 'security', label: '安全与凭据', group: '软件' },
-  { id: 'about', label: '版本与维护', group: '软件' },
+  { id: 'overview', label: '总览', group: null },
+  { id: 'model', label: '模型服务', group: null },
+  { id: 'skills', label: '运行能力', group: null },
+  { id: 'knowledge', label: '知识库', group: null },
+  { id: 'storage', label: '本地存储', group: null },
+  { id: 'about', label: '关于与诊断', group: null },
 ];
 
 /* ============================================================
@@ -478,122 +430,115 @@ function switchInput(id, checked) {
 }
 
 /* 配置页头部操作栏 */
-function configToolbar(hasSave = true) {
-  return `
-    <div class="card" style="margin-bottom:16px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
-      <input type="text" placeholder="搜索设置…" style="width:220px;flex-shrink:0;" />
-      <button class="btn sm" data-config-action="health">一键环境检测</button>
-      <button class="btn sm" data-config-action="import">导入配置</button>
-      <button class="btn sm" data-config-action="export">导出脱敏配置</button>
-      <button class="btn sm" data-config-action="reset">恢复默认</button>
-      <span style="margin-left:auto" class="tag gray">普通用户</span>
-    </div>`;
-}
+function configToolbar() { return ''; }
 
-/* ============================================================
-   页面渲染函数
-   ============================================================ */
-
-/* 1. 总览与环境检测 */
-// 与 bootstrap 中的占位区分开后：让渲染层拿到真实就绪度
-const _overviewCache = { data: null };
-
-async function loadReady() {
-  if (_overviewCache.data) return _overviewCache.data;
-  const data = await api('/api/ready');
-  _overviewCache.data = data;
-  return data;
-}
+// 所有就绪度读取共用一个快照；重启或地址改变后旧请求不得回写。
+const _overviewCache = { data: null, error: '', endpoint: state.apiBase, generation: 0, inFlight: null, signature: '' };
+let _lastApiError = '';
 
 function backendEndpointLabel() {
   try { return new URL(state.apiBase).origin; }
   catch { return '当前后端'; }
 }
-
+function invalidateReadySnapshot() {
+  _overviewCache.generation += 1;
+  _overviewCache.data = null;
+  _overviewCache.error = '';
+  _overviewCache.inFlight = null;
+  _overviewCache.signature = '';
+  _overviewCache.endpoint = state.apiBase;
+}
+function readyCheck(key) {
+  const c = _overviewCache.data?.checks?.[key];
+  if (_overviewCache.error) return { level: 'gray', label: '未检测', detail: `检测失败：${_overviewCache.error}` };
+  if (!c) return { level: 'gray', label: '未检测', detail: '尚未取得检测结果' };
+  if (key === 'model') {
+    if (c.enabled === false) return { level: 'gray', label: '未启用', detail: '模型未启用；规则解析与离线计算仍可使用' };
+    return { level: c.configured || c.ok ? 'info' : 'warn', label: c.configured || c.ok ? '已配置' : '未配置', detail: c.detail || '配置状态不代表实际推理通过' };
+  }
+  if (key === 'knowledge' && c.enabled === false) return { level: 'gray', label: '未启用', detail: c.detail || '检索未启用；不影响离线规则计算' };
+  if (key === 'license') return { level: 'info', label: '许可说明', detail: c.detail || '源码与第三方组件各自遵守其许可' };
+  const labels = { engine: ['可定位', '不可用'], sidecar: ['可达', '未连接'], storage: ['检测通过', '需检查'], skills: ['已加载', '不可用'], knowledge: ['可用', '未就绪'] };
+  return { level: c.ok ? 'ok' : 'warn', label: (labels[key] || ['通过', '需检查'])[c.ok ? 0 : 1], detail: c.detail || '接口未提供详细信息' };
+}
+function overviewRegionHtml() {
+  const order = [['sidecar','后端服务'],['engine','计算引擎'],['model','模型服务'],['storage','本地存储'],['knowledge','知识库'],['skills','工具注册表']];
+  return `<div class="grid grid-3" id="ready-cards">${order.map(([key,label]) => {
+    const c = readyCheck(key);
+    return `<div class="status-card"><div class="label">${label}</div><div style="margin:6px 0"><span class="tag ${c.level}">${c.label}</span></div><div class="foot">${esc(c.detail)}</div></div>`;
+  }).join('')}</div>
+  <div class="card" style="margin-top:14px"><div class="card-title">本次检测范围</div>
+    <div class="foot">后端：${esc(backendEndpointLabel())}；运行版本：${esc(_overviewCache.data?.backend_version || '接口未提供')}。</div>
+    <div class="foot" style="margin-top:8px">引擎注册或可定位不代表本次求解通过；模型已配置不代表服务可达或结构化推理通过。离线计算不要求启用模型和知识库。</div>
+    <div class="foot" style="margin-top:8px">${esc(readyCheck('license').detail)}</div></div>`;
+}
+function applyReadySnapshot(data, error = '') {
+  state.apiOnline = Boolean(data && !error);
+  _overviewCache.data = data;
+  _overviewCache.error = error;
+  for (const key of ['model','engine','sidecar','license']) {
+    const c = readyCheck(key);
+    statusState[key] = { ...c };
+    renderStatusItem(`sb-${key}`, c.level, `${{model:'模型',engine:'引擎',sidecar:'后端',license:'许可证'}[key]} ${c.label}`, c.detail);
+  }
+  const signature = _sig({ data, error });
+  if (signature === _overviewCache.signature) return;
+  _overviewCache.signature = signature;
+  if (currentPage === 'config' && currentSub === 'overview') {
+    const region = document.getElementById('overview-ready-region');
+    if (region) region.innerHTML = overviewRegionHtml();
+  }
+}
+function fetchReadySnapshot({ force = false } = {}) {
+  if (_overviewCache.endpoint !== state.apiBase) invalidateReadySnapshot();
+  if (_overviewCache.inFlight) return _overviewCache.inFlight;
+  if (!force && _overviewCache.data) return Promise.resolve(_overviewCache.data);
+  const generation = _overviewCache.generation;
+  const endpoint = state.apiBase;
+  let pending;
+  pending = Promise.resolve().then(() => t.apiRequest('GET','/api/ready')).then(data => {
+    if (generation !== _overviewCache.generation || endpoint !== state.apiBase) return fetchReadySnapshot();
+    state.apiOnline = true;
+    applyReadySnapshot(data);
+    return data;
+  }).catch(error => {
+    if (generation !== _overviewCache.generation || endpoint !== state.apiBase) return fetchReadySnapshot();
+    state.apiOnline = false;
+    _lastApiError = error.message || String(error);
+    applyReadySnapshot(null, _lastApiError);
+    throw error;
+  }).finally(() => { if (_overviewCache.inFlight === pending) _overviewCache.inFlight = null; });
+  _overviewCache.inFlight = pending;
+  return pending;
+}
+async function loadReady() { return fetchReadySnapshot(); }
 async function pageOverview() {
-  const checks = await loadReady().catch((e) => ({ checks: {}, error: e.message }));
-  const order = [
-    ['model', '模型服务'], ['engine', '计算引擎'], ['sidecar', 'Sidecar'],
-    ['license', '许可证'], ['storage', '本地存储'], ['skills', 'Skill 与知识库'],
-  ];
-  const statusCards = order.map(([k, label]) => {
-    const c = (checks.checks || {})[k];
-    const level = (c && c.level) || 'gray';
-    const detail = k === 'sidecar' && c?.ok
-      ? `${esc(backendEndpointLabel())} 健康检查通过`
-      : (c && c.detail) || (checks.error ? `检测失败：${checks.error}` : '尚未验证');
-    return `
-    <div class="status-card">
-      <div class="label">${label}</div>
-      <div style="margin:6px 0">${statusTag(level)}</div>
-      <div class="foot">${detail}</div>
-    </div>`;
-  }).join('');
-
-  const rows = [
-    ['模型服务', (checks.checks?.model?.ok ? '已配置' : '待配置'), checks.checks?.model?.ok ? 'ok' : 'warn'],
-    ['内置生产引擎', checks.checks?.engine?.ok ? '1 / 1 就绪（OpenDSS）' : '引擎异常', checks.checks?.engine?.ok ? 'ok' : 'err'],
-    ['候选引擎', '多引擎接入预留', 'gray'],
-    ['Policy 默认模板', '已配置', 'info'],
-    ['Skill 注册表', checks.checks?.skills?.ok ? '正常' : '异常', checks.checks?.skills?.ok ? 'ok' : 'warn'],
-    ['知识索引', '有 1 项待更新', 'warn'],
-    ['存储与备份', checks.checks?.storage?.ok ? '可写' : '存储异常', checks.checks?.storage?.ok ? 'ok' : 'err'],
-  ];
-  const completeness = rows.map(([a, b, s]) => `
-    <tr><td>${a}</td><td>${b}</td><td>${statusTag(s)}</td></tr>`).join('');
-
-  const checkItems = [
-    ['凭据配置文件（未加密）', 'warn'],
-    ['模型服务可达性与结构化输出', checks.checks?.model?.ok ? 'ok' : 'warn'],
-    ['Sidecar 健康', checks.checks?.sidecar?.ok ? 'ok' : 'warn'],
-    ['引擎可执行文件与版本', checks.checks?.engine?.ok ? 'ok' : 'warn'],
-    ['许可证与检查时效', checks.checks?.license?.ok ? 'ok' : 'warn'],
-    ['工作目录读写', checks.checks?.storage?.ok ? 'ok' : 'warn'],
-    ['会话数据库与 Checkpoint', 'ok'],
-    ['Skill Manifest / Executor / Validator', checks.checks?.skills?.ok ? 'ok' : 'warn'],
-    ['知识索引', 'warn'],
-    ['报告与 Artifact 目录', checks.checks?.storage?.ok ? 'ok' : 'warn'],
-  ];
-  const envChecks = checkItems.map(([n, s]) => `
-    <tr><td>${n}</td><td>${statusTag(s)}</td><td>${s === 'warn' ? '建议检查或更新' : '通过'}</td></tr>`).join('');
-
-  return `
-    ${configToolbar()}
-    <div class="section-title">就绪度</div>
-    <div class="grid grid-3" id="ready-cards">${statusCards}</div>
-    <div class="section-title">配置完成度</div>
-    <div class="card"><table><thead><tr><th>模块</th><th>状态</th><th>标签</th></tr></thead>
-    <tbody>${completeness}</tbody></table></div>
-    <div class="section-title">一键环境检测</div>
-    <div class="card"><table><thead><tr><th>检查项</th><th>结果</th><th>建议操作</th></tr></thead>
-    <tbody>${envChecks}</tbody></table></div>`;
+  await loadReady().catch(() => {});
+  return `<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px"><div class="section-title" style="margin:0">环境状态</div><button class="btn sm" data-config-action="health">刷新环境状态</button></div><div id="overview-ready-region">${overviewRegionHtml()}</div>`;
 }
 
 // 可用模型列表（云端走 /api/models，本地走 /api/local-models）
 const _modelCache = { fetched: false, models: [], current: '', error: '', backend: '' };
 
+let _modelFetchRevision = 0;
+function modelConfigurationPending() {
+  return ['draft','saving','pending','external','apply-failed','save-failed'].includes(_modelApplyState);
+}
 async function fetchModels(force = false, modeOverride) {
   const mode = modeOverride || state.llmMode || 'cloud';
+  if (modelConfigurationPending()) return { fetched: true, pending: true, backend: mode, models: [], error: _modelStatus.text || '配置尚未应用' };
   if (_modelCache.fetched && !force && _modelCache.backend === mode) return _modelCache;
-  _modelCache.backend = mode;
+  const revision = ++_modelFetchRevision;
+  const saveRevision = _modelSaveRevision;
+  const backendGeneration = _overviewCache.generation;
+  const url = mode === 'local' ? `/api/local-models?url=${encodeURIComponent(state.llmOllamaUrl || 'http://localhost:11434/v1')}` : '/api/models';
+  let result;
   try {
-    let url, d;
-    if (mode === 'local') {
-      const ollamaUrl = state.llmOllamaUrl || 'http://localhost:11434/v1';
-      url = `/api/local-models?url=${encodeURIComponent(ollamaUrl)}`;
-    } else {
-      url = '/api/models';
-    }
-    d = await api(url);
-    _modelCache.models = (d && d.models) || [];
-    _modelCache.current = (d && d.current) || '';
-    _modelCache.error = d && d.ok ? '' : ((d && d.error) || '拉取失败');
-  } catch (e) {
-    _modelCache.error = e.message;
-    _modelCache.models = [];
-  }
-  _modelCache.fetched = true;
-  return _modelCache;
+    const data = await api(url);
+    result = { fetched: true, backend: mode, models: data?.models || [], current: data?.current || '', error: data?.ok ? '' : data?.error || '模型列表不可达' };
+  } catch (error) { result = { fetched: true, backend: mode, models: [], current: '', error: error.message }; }
+  if (revision === _modelFetchRevision && mode === state.llmMode && saveRevision === _modelSaveRevision && backendGeneration === _overviewCache.generation && !modelConfigurationPending()) Object.assign(_modelCache, result);
+  return result;
 }
 
 /* 2. 模型服务 */
@@ -627,7 +572,7 @@ function renderModelField(m, preferred, mode) {
   // - 拉取失败 → 黄色"⚠ 远端不可达"标签，hover 显示完整错误；不阻塞填写
   // 用户的当前值（cur）仍能正常输入与保存，与远端是否可达无关。
   if (m.fetched) {
-    const errShort = m.error ? '远端不可达' : '未拉到模型';
+    const errShort = m.pending ? '配置待应用' : (m.error ? '列表不可达' : '未拉到模型');
     const errFull  = m.error ? esc(m.error) : '请稍后重试';
     return `<input type="text" id="m-model" value="${esc(cur)}" autocomplete="off" />
        <div class="foot" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
@@ -644,17 +589,17 @@ function renderModelField(m, preferred, mode) {
 // 后台补齐下拉：只改 #model-field-slot 这一块，不重渲染整页
 async function refreshModelField(force = false) {
   const slot = document.getElementById('model-field-slot');
-  if (!slot) return;                                   // 不在模型页
-  if (_modelCache.fetched && _modelCache.models.length && !force) {
-    slot.innerHTML = renderModelField(_modelCache);     // 已有缓存，直接填
-    return;
-  }
-  const typed = document.getElementById('m-model');
-  const preferred = typed && typed.value ? typed.value : '';
-  const m = await fetchModels(force);
-  const slot2 = document.getElementById('model-field-slot');
-  if (!slot2) return;                                  // 期间用户切走了
-  slot2.innerHTML = renderModelField(m, preferred, state.llmMode || 'cloud');
+  if (!slot) return;
+  const mode = state.llmMode;
+  const revision = _modelSaveRevision;
+  const backendGeneration = _overviewCache.generation;
+  const data = await fetchModels(force, mode);
+  if (mode !== state.llmMode || revision !== _modelSaveRevision || backendGeneration !== _overviewCache.generation || currentPage !== 'config' || currentSub !== 'model') return;
+  const currentSlot = document.getElementById('model-field-slot');
+  if (!currentSlot || currentSlot !== slot) return;
+  const preferred = document.getElementById('m-model')?.value || '';
+  currentSlot.innerHTML = renderModelField(data, preferred, mode);
+  bindModelFieldInput();
 }
 
 function pageModel() {
@@ -675,7 +620,7 @@ function pageModel() {
         </label>
       </div>
       <div class="foot" style="margin-top:6px">
-        切换模式后请重新 <b>保存并重启后端</b>，环境变量才会更新。
+        切换模式会自动保存；请 <b>等待自动保存及空闲后生效</b>，环境变量才会更新。
       </div>
     </div>`;
 
@@ -697,7 +642,7 @@ function pageModel() {
               title="${_apikeyRevealed ? '隐藏明文（防止截图泄露）' : '显示明文（用于核对）'}"
               style="min-width:72px">${_apikeyRevealed ? '🙈 隐藏' : '👁 显示'}</button>
           </div>
-          <div class="foot">填错或泄露时，先在 <b>云控制台禁用 Key</b> 再点 <b>保存并重启后端</b>。Key 与云端地址随云端界面单独保存，切换到本地不会丢失。</div>
+          <div class="foot">填错或泄露时，先在 <b>云控制台禁用 Key</b> 再点 <b>等待自动保存及空闲后生效</b>。Key 与云端地址随云端界面单独保存，切换到本地不会丢失。</div>
         </div>`)}
     `;
   } else {
@@ -732,7 +677,7 @@ function pageModel() {
   // ====== 测试连接 ======
   const testRow = `
     <div style="display:flex;gap:10px;align-items:center;margin-top:14px">
-      <button class="btn primary" data-config-action="model-test">测试连接</button>
+      <button class="btn primary" data-config-action="model-test">检查连接</button>
       <span id="conn-status" class="tag gray"><span class="dot"></span>未测试（点按钮探测）</span>
     </div>`;
 
@@ -742,181 +687,26 @@ function pageModel() {
       <div class="card-title">基础配置</div>
       ${modeRow}
       <div class="grid grid-2">
-        ${field('Provider 类型', `<input type="text" value="${mode === 'local' ? '本地 Ollama（OpenAI 兼容）' : 'OpenAI 兼容（DashScope / b.ai / DeepSeek 等）'}" />`)}
+        ${field('接口类型', `<span>${mode === 'local' ? '本地 Ollama（OpenAI 兼容）' : 'OpenAI 兼容云端 API'}</span>`)}
         ${modeSpecific}
         ${modelRow}
       </div>
       ${autoSaveHint}
       ${testRow}
+      <button class="btn sm" style="margin-top:10px" data-config-action="models-refresh">刷新模型列表</button>
     </div>
-    <div class="section-title">能力检测（只读）</div>
-    <div class="card"><div class="grid grid-4">
-      ${[['JSON Object', 'ok'], ['JSON Schema', 'ok'], ['Tool Call / tool_choice', 'ok'],
-         ['流式输出', 'ok'], ['Usage 返回', 'ok'], ['响应耗时', 'ok'],
-         ['最近错误分类', 'ok'], ['辅助接入新引擎', 'ok']].map(([n, s]) => `
-        <div class="status-card"><div class="label">${n}</div><div style="margin-top:6px">${statusTag(s)}</div></div>`).join('')}
-    </div></div>
-    <div class="section-title">高级设置（专家模式）</div>
-    <div class="card"><div class="grid grid-2">
-      ${field('请求超时（秒）', textInput('adv-1', '120'))}
-      ${field('最大重试', textInput('adv-2', '3'))}
-      ${field('Temperature', textInput('adv-3', '0.3'))}
-      ${field('单请求最大输出 Token', textInput('adv-4', '4096'))}
-      ${field('上下文窗口声明', textInput('adv-5', '8192'))}
-      ${field('上下文压缩阈值', textInput('adv-6', '0.85'))}
-    </div></div>
+    <div class="section-title">本地凭据</div>${credentialInfoHtml()}
     <div class="section-title">产品边界</div>
     <div class="card" style="color:var(--text-muted);font-size:12.5px;line-height:1.7">
       本软件连接 OpenAI 兼容模型服务，不负责下载、安装、启动或监督本地大模型运行时。
       用户可填写本地服务地址，但本软件不管理其进程、模型目录和显卡。</div>`;
 }
 
-/* 3. 计算引擎中心 */
-function pageEngine() {
-  const summary = [
-    ['已注册引擎', '1'], ['内置生产引擎', '1'], ['当前可用', '1'],
-    ['待验证', '0'], ['许可证阻断', '0'], ['运行异常', '0'],
-  ];
-  const summaryCards = summary.map(([a, b]) => `
-    <div class="status-card"><div class="label">${a}</div><div class="value">${b}</div></div>`).join('');
-
-  const rows = `
-    <tr><td><b>OpenDSS</b></td><td>Python (dss-python)</td><td>0.15+</td>
-    <td>进程内库</td><td>${statusTag('ok')}</td><td>8</td><td>${statusTag('ok')}</td><td>—</td><td>0</td><td>是</td><td><button class="btn sm">详情</button></td></tr>`;
-
-  return `
-    ${configToolbar()}
-    <div class="card" style="margin-bottom:16px;font-size:13px;color:var(--text-muted)">
-      当前版本：<b style="color:var(--text)">1 个内置生产引擎，多引擎接入架构预留</b>
-    </div>
-    <div class="grid grid-3" style="grid-template-columns:repeat(6,1fr);margin-bottom:16px">${summaryCards}</div>
-    <div class="section-title">默认引擎策略</div>
-    <div class="card"><div class="grid grid-2">
-      ${field('默认引擎选择', `<select><option>自动选择</option><option>固定 OpenDSS</option></select>`)}
-      ${field('选择偏好', `<select><option>最小充分能力</option><option>优先现代引擎</option></select>`)}
-    </div><div style="font-size:12px;color:var(--text-muted)">修改默认值不影响已有会话。</div></div>
-    <div class="section-title">引擎注册表</div>
-    <div class="card"><table><thead><tr>
-      <th>引擎名称</th><th>类型</th><th>版本</th><th>接入方式</th><th>生产状态</th><th>已验证能力</th><th>授权状态</th><th>授权检查</th><th>当前任务</th><th>允许承担 V2</th><th>操作</th>
-    </tr></thead><tbody>${rows}</tbody></table></div>
-    <div class="section-title">引擎详情</div>
-    <div class="card">
-      <div class="tag" style="margin-bottom:12px">概况｜能力｜运行环境｜文档知识｜关联 Skill｜验证记录｜版本与影响</div>
-      <div class="grid grid-2" style="font-size:12.5px;color:var(--text-muted)">
-        <div>Engine Profile：dss-python 0.15，AC 稳态单场景</div>
-        <div>Capability Registry：8 项已验证能力</div>
-        <div>CLI / Core 版本：OpenDSS 内核（Hash 摘要显示）</div>
-        <div>适用 Case：DSS / Excel / CSV / JSON / MATPOWER</div>
-        <div>允许物理角色：主执行、辅助、V2、跨引擎复核</div>
-        <div>并发与 Lease：串行，单一 Circuit</div>
-      </div>
-    </div>
-    <div class="section-title">引擎 × 能力矩阵</div>
-    <div class="card"><table><thead><tr><th>能力</th><th>OpenDSS</th><th>候选引擎（预留）</th></tr></thead><tbody>
-      ${['数据与格式校验','初始潮流验真','拓扑/孤岛/参考节点','电压—无功','有功—相角','Q-V / P-Q / P-V 分析','DC 有功可行性','候选生成与组合','Policy Guard','独立 V2','报告生成'].map((c, i) => `
-      <tr><td>${c}</td><td>${i < 7 ? statusTag('ok') : statusTag('gray')}</td><td>${statusTag('gray')}</td></tr>`).join('')}
-    </tbody></table></div>`;
-}
-
-/* 4. Sidecar 与环境 */
-function pageSidecar() {
-  return `
-    ${configToolbar()}
-    <div class="card"><div class="card-title">Sidecar 运行状态 ${statusTag('ok')}</div>
-      <div class="grid grid-2">
-        ${field('Sidecar 版本', `<input type="text" value="1.6.0" disabled />`)}
-        ${field('启动时间', `<input type="text" value="2026-09-05 10:00:00" disabled />`)}
-        ${field('当前健康状态', `<span class="tag ok"><span class="dot"></span>健康</span>`)}
-        ${field('活跃任务', `<input type="text" value="0" disabled />`)}
-      </div>
-      <div style="display:flex;gap:10px"><button class="btn">重启 Sidecar</button><button class="btn">导出诊断摘要</button></div>
-    </div>
-    <div class="section-title">内部环境（管理员技术审计，脱敏显示）</div>
-    <div class="card" style="color:var(--text-muted);font-size:12.5px">
-      动态端口、Session Token、启动命令、内部环境变量——仅管理员可查看。</div>`;
-}
-
-/* 5. 执行与预算 */
-function pageBudget() {
-  return `
-    ${configToolbar()}
-    <div class="card"><div class="card-title">普通模式预设</div>
-      <div class="grid grid-2">
-        ${field('分析深度', `<select><option>标准</option><option>深入</option></select>`)}
-        ${field('计算预算', `<select><option>标准</option><option>扩展</option></select>`)}
-        ${field('默认最大恢复轮次', textInput('b-1', '2'))}
-        ${field('默认最大求解器调用数', textInput('b-2', '8'))}
-        ${field('默认最大并行候选数', textInput('b-3', '1'))}
-        ${field('后台最大会话数', textInput('b-4', '4'))}
-        ${field('工具调用超时（秒）', textInput('b-5', '60'))}
-        ${field('工程故障自动重试次数', textInput('b-6', '2'))}
-      </div>
-      <div style="font-size:12px;color:var(--text-muted)">这些只是新会话默认值，启动任务前仍在任务合同中确认。</div>
-    </div>
-    <div class="section-title">高级与管理员模式（只读）</div>
-    <div class="card"><div class="grid grid-2">
-      ${['完整诊断最大调用次数','Skill 选择模型调用次数','假设重新生成次数','重复证据调用阻断','Evidence Token 预算','自适应预算状态','Checkpoint 存储健康','并行候选调度状态'].map((n) => `
-        <div class="status-card"><div class="label">${n}</div><div class="foot" style="margin-top:8px">${statusTag('gray')} 管理员只读</div></div>`).join('')}
-    </div></div>`;
-}
-
-/* 6. 安全策略与默认任务合同 */
-function pagePolicy() {
-  const hard = ['保持拓扑','保持负荷','保持发电计划','保持交换功率','禁止切负荷','禁止改变母线类型','最大设备调整数','最大求解器调用数','最大并行候选数','需要审批的风险等级'];
-  const soft = ['最少设备变化','最小总调整幅度','优先可逆动作','优先原控制模式','优先区域','优先动作类型'];
-  return `
-    ${configToolbar()}
-    <div class="card" style="margin-bottom:16px;font-size:12.5px;color:var(--text-muted)">
-      本页配置「新任务默认模板」，不直接修改运行中的会话。每次任务仍在工作台生成、展示和确认实际 Task Policy。</div>
-    <div class="card"><div class="card-title">默认任务模板</div>
-      <div class="grid grid-2">
-        ${field('默认 Task Profile', `<select><option>标准潮流分析</option><option>深度诊断</option></select>`)}
-        ${field('默认任务模式', `<select><option>只读分析</option><option>方案建议</option></select>`)}
-        ${field('默认最小验真等级', `<select><option>标准</option><option>严格</option></select>`)}
-        ${field('越限处理', `<select><option>仅检测</option></select>`)}
-      </div></div>
-    <div class="section-title">用户硬约束模板</div>
-    <div class="card"><div class="grid grid-2">
-      ${hard.map((n) => `<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border)">
-        <span>${n}</span><span style="display:flex;gap:8px;align-items:center">${switchInput('h-' + n, n.startsWith('保持'))}${switchInput('h2-' + n, false)}</span></div>`).join('')}
-    </div></div>
-    <div class="section-title">用户软偏好</div>
-    <div class="card"><div class="grid grid-2">
-      ${soft.map((n) => `<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border)"><span>${n}</span>${switchInput('s-' + n, false)}</div>`).join('')}
-    </div></div>
-    <div class="section-title">验真策略（只读）</div>
-    <div class="card"><div class="grid grid-2">
-      ${[['最低验真等级','标准'],['是否必须 V2','否'],['当前容差版本','1e-4'],['当前工程标准','复现性 + 功率平衡']].map(([a,b]) => `
-        <div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border)"><span>${a}</span><b>${b}</b></div>`).join('')}
-    </div><div style="font-size:12px;color:var(--text-muted);margin-top:8px">物理硬边界、Engine Safety 和 V2 证据门不提供关闭开关。</div></div>`;
-}
-
-/* 7. Skill 能力 */
+// 与本版本后端 TOOL_REGISTRY 对应维护的只读工具清单。
 function pageSkills() {
-  const groups = ['数据与格式校验','初始潮流验真','拓扑/孤岛/参考节点','初始化与数值路径','电压—无功','有功—相角','候选生成与组合','Policy Guard','Revision 与回滚','独立 V2','因果复核','报告生成'];
-  const tools = [
-    ['load_case', '算例装载', 'load_case', 'ok'],
-    ['validate_case', '编译预检与静态检查', 'validate_case', 'ok'],
-    ['profile_network', '网络画像提取', 'build_network_profile', 'ok'],
-    ['build_solver_profile', '求解策略冻结', 'build_opendss_solver_profile', 'ok'],
-    ['run_powerflow', '潮流求解', 'run_opendss_powerflow', 'ok'],
-    ['extract_powerflow_result', '结果归一化', 'normalize_results', 'ok'],
-    ['verify_power_balance', '独立验证与功率平衡', 'verify_result_integrity_and_power_balance', 'ok'],
-    ['export_artifacts', '产物清单导出', 'export_artifacts', 'ok'],
-  ];
-  return `
-    ${configToolbar()}
-    <div class="card"><div class="card-title">能力分组</div>
-      <div class="grid grid-3" style="grid-template-columns:repeat(4,1fr)">
-        ${groups.map((g) => `<div class="status-card"><div class="label">${g}</div><div style="margin-top:6px">${statusTag('info')} 已注册</div></div>`).join('')}
-      </div></div>
-    <div class="section-title">Skill 注册表（8 个标准工具）</div>
-    <div class="card"><table><thead><tr><th>工具名称</th><th>描述</th><th>所属阶段</th><th>状态</th></tr></thead><tbody>
-      ${tools.map(([n, d, s, st]) => `<tr><td><b>${n}</b></td><td>${d}</td><td><code>${s}</code></td><td>${statusTag(st)}</td></tr>`).join('')}
-    </tbody></table></div>
-    <div class="section-title">Skill 与引擎矩阵</div>
-    <div class="card" style="font-size:12.5px;color:var(--text-muted)">
-      同一个科学 Skill 可由不同引擎适配器承载，避免"一种引擎复制一套 Skill"。当前 8 个 Skill 均由 OpenDSS 适配器承载。</div>`;
+  const tools = [['load_case','装载算例'],['validate_case','输入与编译检查'],['profile_network','网络画像'],['build_solver_profile','冻结求解策略'],['run_powerflow','潮流求解'],['extract_powerflow_result','结果归一化'],['verify_power_balance','完整性、功率平衡与同引擎复算'],['export_artifacts','导出报告与证据']];
+  return `<div class="card"><div class="card-title">固定流程与8个标准工具</div><table><thead><tr><th>工具</th><th>作用</th></tr></thead><tbody>${tools.map(([name,detail])=>`<tr><td><code>${name}</code></td><td>${detail}</td></tr>`).join('')}</tbody></table><div class="foot" style="margin-top:12px">工具清单与本版本代码共同维护；加载状态见总览。模型在受约束节点参与理解、解释和有限恢复选择，数值来自OpenDSS。</div></div>
+  <div class="card" style="margin-top:14px"><div class="card-title">支持边界</div><p>单场景稳态潮流，支持规定结构的DSS、ZIP、XLSX、CSV、JSON和静态MATPOWER输入。原生DSS按模型分相；有明确相别的表格可分相，无相别按三相等值。Q限额按输入策略有条件支持。</p><div class="foot">独立验证使用同一引擎复算，不是第二求解器认证。不提供自动调度、重构、短路、概率潮流、时序优化或跨会话自主学习。详细限制以本次报告为准。</div></div>`;
 }
 
 /* 8. 知识与经验 */
@@ -966,15 +756,7 @@ async function pageKnowledge() {
   return `
     ${configToolbar()}
     ${kbCard}
-    <div class="section-title">证据记忆与经验库</div>
-    <div class="card"><div class="grid grid-3">
-      ${['Working Memory','Episode Memory','Strategy Memory','Verified-State Memory','Safety Memory','Cross-Case Evidence'].map((n) => `
-        <div class="status-card"><div class="label">${n}</div><div class="foot" style="margin-top:8px">记录量 0 · ${statusTag('gray')}</div></div>`).join('')}
-    </div></div>
-    <div class="section-title">Skill 演化</div>
-    <div class="card"><div style="display:flex;gap:8px">
-      ${['Draft','Candidate','Shadow','Active','Retired'].map((s, i) => `<span class="tag ${i === 3 ? 'ok' : 'gray'}">${s}</span>`).join('')}
-    </div><div style="font-size:12px;color:var(--text-muted);margin-top:10px">单 Case 成功只能形成 Episode 或候选，不允许模型在线改写生产 Skill。</div></div>`;
+    <div class="foot">知识库可选；检索就绪不代表回答质量已验收。未启用时不影响规则计算。</div>`;
 }
 
 /* 9. 样本与本地存储 */
@@ -1015,7 +797,7 @@ async function pageStorage() {
 
   const dirRow = (x) => `
     <div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border)">
-      <span>${esc(x.name)}<span class="foot" style="margin-left:8px">${esc(x.note || '')}</span></span>
+      <span title="${esc(x.path || '')}">${esc(x.name)}<span class="foot" style="margin-left:8px">${esc(x.note || '')}</span></span>
       <span>${x.file_count} 文件 · ${fmtBytes(x.size_bytes)}</span>
     </div>`;
 
@@ -1053,7 +835,7 @@ async function pageStorage() {
     ${configToolbar()}
     <div class="card"><div class="card-title">状态与位置</div>
       <div class="grid grid-2" style="font-size:12.5px;color:var(--text-muted)">
-        ${[['应用数据目录','chat_data/'],['Case 库','cases/'],['会话数据库','chat_data/chat.db'],['Checkpoint','tasks/<id>/state.json'],['Reports','outputs/<id>/report.md'],['Artifacts','outputs/<id>/']].map(([a,b]) => `
+        ${[...(d.dirs || []).map(item => [item.name, item.path]), ['会话数据库', d.db.path]].map(([a,b]) => `
         <div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border)"><span>${a}</span><span>${esc(b)}</span></div>`).join('')}
       </div>
       <div class="grid grid-2" style="margin-top:12px">
@@ -1070,7 +852,7 @@ async function pageStorage() {
     </div>
 
     <div class="section-title">可清理项（只读盘点，需勾选后归档）</div>
-    <div class="foot" style="margin:-4px 0 10px">清理方式为<b>归档</b>（移动到 <code>_archive/&lt;时间戳&gt;/</code>），不直接删除，可回滚。</div>
+    <div class="foot" style="margin:-4px 0 10px">清理方式为<b>归档</b>（移动到 <code>_archive/&lt;时间戳&gt;/</code>），不直接删除，归档后可手动移回。</div>
     ${STORAGE_GROUPS.map(groupCard).join('')}
 
     <div class="card" style="position:sticky;bottom:0">
@@ -1103,87 +885,15 @@ async function pageStorage() {
     </div>`;
 }
 
-/* 10. 报告与导出 */
-function pageReport() {
-  return `
-    ${configToolbar()}
-    <div class="card"><div class="card-title">报告默认设置</div>
-      <div class="grid grid-2">
-        ${field('默认格式', `<select><option>Markdown / JSON</option></select>`)}
-        ${field('默认导出目录', textInput('r-1', 'outputs/'))}
-      </div></div>
-    <div class="section-title">报告内容项</div>
-    <div class="card"><div class="grid grid-3">
-      ${['工程结论','最终调整方案','调整前后对比','执行轨迹','Policy 摘要','Skill 和工具贡献','引擎证据','技术附录','脱敏策略'].map((n) => `
-        <div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border)"><span>${n}</span>${switchInput('rep-' + n, true)}</div>`).join('')}
-    </div><div style="font-size:12px;color:var(--text-muted);margin-top:10px">原始模型输出、内部 ID、原始 State 和未脱敏路径默认不进入普通报告。</div></div>`;
+function credentialInfoHtml() {
+  return `<div class="card"><div class="grid grid-2">${field('凭据保存方式','<span class="tag warn">本地配置文件（未加密）</span>')}${field('API Key 配置',`<span class="tag ${state.llmApiKeySet ? 'info' : 'gray'}">${state.llmApiKeySet ? '已配置' : '未配置'}</span>`)}</div><div class="foot" style="margin-top:10px">API Key写入本机settings.json；隐藏字符只遮挡显示，不加密磁盘文件。日志未经过独立脱敏检查，请勿公开配置或原始日志。</div></div>`;
 }
-
-/* 11. 日志与诊断 */
-function pageLogs() {
-  return `
-    ${configToolbar()}
-    <div class="card"><div class="card-title">日志与可观测性</div>
-      <div class="grid grid-2">
-        ${field('Sidecar 日志状态', `<span class="tag ok"><span class="dot"></span>正常</span>`)}
-        ${field('最近错误摘要', `<input type="text" value="无" disabled />`)}
-      </div>
-      <div style="display:flex;gap:10px"><button class="btn">打开日志目录</button><button class="btn">导出脱敏诊断包</button></div></div>
-    <div class="section-title">管理员</div>
-    <div class="card"><div class="grid grid-2">
-      ${[['日志级别','信息'],['日志保留','30 天'],['原始工具 stdout/stderr 保留','否'],['失败现场保留','是']].map(([a,b]) => `
-        <div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border)"><span>${a}</span><b>${b}</b></div>`).join('')}
-    </div><div style="font-size:12px;color:var(--text-muted);margin-top:10px">失败分类规则不可配置为「把工具失败视为物理不收敛」。</div></div>`;
-}
-
-/* 12. 通知与外观 */
-function pageAppearance() {
-  const opts = ['浅色','深色','跟随系统'];
-  return `
-    ${configToolbar()}
-    <div class="card"><div class="card-title">通知与外观</div>
-      <div class="grid grid-2">
-        ${field('主题', `<select>${opts.map((o) => `<option>${o}</option>`).join('')}</select>`)}
-        ${field('语言', `<select><option>简体中文</option></select>`)}
-        ${field('字体大小', `<select><option>标准</option></select>`)}
-        ${field('页面缩放', `<select><option>100%</option></select>`)}
-      </div></div>
-    <div class="section-title">通知</div>
-    <div class="card"><div class="grid grid-2">
-      ${['后台任务完成通知','任务失败通知','等待审批通知','声音提示','启动恢复上次会话','自动生成会话标题'].map((n, i) => `
-        <div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border)"><span>${n}</span>${switchInput('noti-' + i, true)}</div>`).join('')}
-    </div></div>`;
-}
-
-/* 13. 安全与凭据 */
-function pageSecurity() {
-  return `
-    ${configToolbar()}
-    <div class="card"><div class="card-title">安全与凭据</div>
-      <div class="grid grid-2">
-        ${field('凭据保存方式', `<span class="tag warn">本机配置文件（未加密）</span>`)}
-        ${field('API Key 配置', `<span class="tag ${state.llmApiKeySet ? 'info' : 'gray'}">${state.llmApiKeySet ? '已配置' : '未配置'}</span>`)}
-        ${field('敏感日志脱敏检查', `<span class="tag gray">未执行独立检查</span>`)}
-        ${field('后端连接地址', esc(backendEndpointLabel()))}
-      </div></div>
-    <div class="card" style="margin-top:14px;font-size:12.5px;color:var(--text-muted);line-height:1.7">
-      当前未接入 Windows 安全存储。API Key 写入本机 settings.json，密码输入框只遮挡界面显示，不加密磁盘文件。
-      请勿提交配置文件或含密钥的截图；后端健康状态不代表凭据已安全保存。</div>`;
-}
-
-/* 14. 版本与维护 */
-function pageAbout() {
-  return `
-    ${configToolbar()}
-    <div class="card"><div class="card-title">版本信息</div>
-      <div class="grid grid-2" style="font-size:12.5px;color:var(--text-muted)">
-        ${[['软件版本','1.6.0'],['Sidecar 版本','1.6.0'],['构建版本','—'],['Repository Commit 摘要','—'],['发布签名状态','未签名']].map(([a,b]) => `
-        <div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border)"><span>${a}</span><b>${b}</b></div>`).join('')}
-      </div></div>
-    <div class="section-title">维护操作</div>
-    <div class="card"><div style="display:flex;gap:10px;flex-wrap:wrap">
-      <button class="btn">检查更新</button><button class="btn">重启 Sidecar</button>
-      <button class="btn">环境诊断</button><button class="btn danger">恢复默认配置</button></div></div>`;
+async function pageAbout() {
+  const info = await Promise.resolve().then(() => t.getAppInfo()).catch(() => ({}));
+  const ownership = { owned: '本窗口所属后端', external: '复用外部后端', none: '未启动所属后端' }[info.backend?.ownership] || '接口未提供';
+  const rows = [['软件版本',info.appVersion || '接口未提供'],['后端代码版本',info.backendCodeVersion || '接口未提供'],['实际后端运行版本',_overviewCache.data?.backend_version || '未检测'],['后端归属',ownership],['后端地址',info.backend?.base || backendEndpointLabel()],['作者与维护者',info.author || 'yangshaopeng'],['源码许可',info.license || 'Apache-2.0']];
+  return `<div class="card"><div class="card-title">版本与运行信息</div>${rows.map(([label,value])=>`<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border)"><span>${label}</span><b>${esc(value)}</b></div>`).join('')}<div class="foot" style="margin-top:10px">代码版本与当前连接的后端运行版本分别展示；尚未检测时不推定一致。第三方组件遵守各自许可。</div></div>
+  <div class="card" style="margin-top:14px"><div class="card-title">诊断</div><div class="foot">最近界面API错误：${esc(_lastApiError || '本次界面尚未记录错误')}</div><button class="btn sm" data-config-action="open-logs" style="margin-top:12px">打开应用日志目录</button><div class="foot" style="margin-top:8px">${info.logs?.available ? '本应用日志目录可用。' : '日志目录尚未确认存在，打开时将返回实际结果。'} 日志为原始本机资料，未经脱敏。</div></div>`;
 }
 
 /* ============================================================
@@ -2364,20 +2074,13 @@ async function pageResults() {
     err = e.message || String(e);
   }
 
-  // RAG 是否真的接上了（不再写死"否"）
-  let ragOn = false;
-  try {
-    const st = await api('/api/rag/status');
-    ragOn = Boolean(st && (st.enabled || (st.power_rag && st.power_rag.enabled)));
-  } catch (e) { /* 拉不到就当没接 */ }
-
   if (!task) {
     return `
       <div class="card" style="margin-bottom:16px">
         <div class="card-title">结果展示</div>
         <div style="padding:18px 0;text-align:center;color:var(--text-muted)">
           <div style="font-size:15px;margin-bottom:6px">还没有跑过任务</div>
-          <div style="font-size:12.5px">去 <b>分析工作台</b> 说一句「计算 IEEE33」，跑完这里就会显示真实结果。</div>
+          <div style="font-size:12.5px">去 <b>分析工作台</b> 说一句「计算 case4」，跑完这里就会显示真实结果。</div>
           ${err ? `<div style="font-size:12px;color:#b42318;margin-top:10px">读取失败：${esc(err)}</div>` : ''}
         </div>
       </div>`;
@@ -2402,8 +2105,6 @@ async function pageResults() {
     ['最高电压', s.vmax ? `${s.vmax} pu（母线 ${s.vmaxBus}）` : '—'],
     ['总网损', s.lossKw ? `${s.lossKw} kW${s.lossPct ? `，占负荷 ${s.lossPct}%` : ''}` : '—'],
   ];
-  const tabs = ['工程结果','恢复过程','假设与证据','引擎与能力','Policy 与版本','经验沉淀','技术审计'];
-
   return `
     <div class="card" style="margin-bottom:16px">
       <div class="card-title">工程结论（最近一次真实任务）</div>
@@ -2416,257 +2117,237 @@ async function pageResults() {
         <span class="foot">数据来源：聊天消息 ${esc(task.sessionId || '')} 的真实任务记录</span>
       </div>
     </div>
-    <div class="card" style="margin-bottom:16px">
-      <div style="display:flex;gap:6px">${tabs.map((t, i) => `<span class="tag ${i === 0 ? 'info' : 'gray'}">${t}</span>`).join('')}</div>
-      <div class="foot" style="margin-top:8px">后 6 个页签为后续规划，暂未接入。</div>
-    </div>
-    <div class="grid grid-2">
-      <div class="card">
+    <div class="card">
         <div class="card-title">关键指标</div>
         <table><thead><tr><th>指标</th><th>结果</th></tr></thead><tbody>
           ${metrics.map(([a,b]) => `<tr><td>${a}</td><td><b>${esc(b)}</b></td></tr>`).join('')}
         </tbody></table>
       </div>
-      <div class="card">
-        <div class="card-title">多引擎证据分层</div>
-        <table><thead><tr><th>角色</th><th>引擎</th><th>状态</th></tr></thead><tbody>
-          ${[['主执行引擎','OpenDSS','ok'],['辅助计算引擎','—','gray'],['独立复算引擎','OpenDSS（V2）','ok'],['跨引擎复核','预留','gray']].map(([a,b,st]) => `<tr><td>${a}</td><td>${b}</td><td>${statusTag(st)}</td></tr>`).join('')}
-        </tbody></table>
-        <div class="foot" style="margin-top:8px">辅助引擎强制标记"仅辅助"，不能冒充权威 V2。</div>
-      </div>
-    </div>
-    <div class="card" style="margin-top:14px">
-      <div class="card-title">模块贡献</div>
-      <table><thead><tr><th>模块</th><th>存在</th><th>被采用</th><th>对最终决策有贡献</th></tr></thead><tbody>
-        ${[
-          ['模型', '是', '是', '理解与解释'],
-          ['Skill', '是', '是', '8 个工具执行'],
-          ['Memory', '否', '—', '—'],
-          ['RAG', ragOn ? '是' : '否', ragOn ? '是' : '—', ragOn ? '知识库检索补充证据' : '—'],
-          ['Guard', '是', '是', '请求/执行/发布门'],
-          ['引擎', '是', '是', '潮流计算'],
-        ].map(([a,b,c,d]) => `<tr><td>${a}</td><td>${b}</td><td>${c}</td><td>${d}</td></tr>`).join('')}
-      </tbody></table>
-      <div class="foot" style="margin-top:8px">有记录不等于有贡献。</div>
-    </div>`;
+    <div class="foot" style="margin-top:10px">完整数值、同引擎独立验证和模型假设见任务报告；本页仅展示上述真实任务记录的摘要。</div>`;
 }
 
 /* ============================================================
    路由
    ============================================================ */
-const PAGE_RENDER = {
-  overview: pageOverview, model: pageModel, engine: pageEngine, sidecar: pageSidecar,
-  budget: pageBudget, policy: pagePolicy, skills: pageSkills, knowledge: pageKnowledge,
-  storage: pageStorage, report: pageReport, logs: pageLogs, appearance: pageAppearance,
-  security: pageSecurity, about: pageAbout,
-};
-
+const PAGE_RENDER = { overview: pageOverview, model: pageModel, skills: pageSkills, knowledge: pageKnowledge, storage: pageStorage, about: pageAbout };
 let currentPage = 'config';
 let currentSub = 'overview';
-
 function renderSubnav() {
   const nav = document.getElementById('subnav');
-  const savebar = document.getElementById('savebar');
-  if (currentPage !== 'config') {
-    nav.classList.add('hidden');
-    savebar.classList.add('hidden');
-    return;
-  }
+  if (currentPage !== 'config') { nav.classList.add('hidden'); return; }
   nav.classList.remove('hidden');
-  savebar.classList.remove('hidden');
-  let html = '';
-  for (const item of CONFIG_SUBNAV) {
-    if (item.group === true) {
-      html += `<div class="subnav-group-title">${item.label}</div>`;
-    } else {
-      const active = item.id === currentSub ? 'active' : '';
-      html += `<div class="subnav-item ${active}" data-sub="${item.id}">${item.label}</div>`;
-    }
-  }
-  nav.innerHTML = html;
-  nav.querySelectorAll('.subnav-item').forEach((el) => {
-    el.onclick = () => { currentSub = el.dataset.sub; route(); };
-  });
-  savebar.innerHTML = `
-    <span class="hint">有 0 项未保存更改</span>
-    <span style="margin-left:auto" class="hint"></span>
-    <div class="right">
-      <button class="btn" data-save-action="changes">查看变更</button>
-      <button class="btn" data-save-action="discard">放弃更改</button>
-      <button class="btn primary" data-save-action="save">保存并应用</button>
-    </div>`;
-  savebar.querySelectorAll('[data-save-action]').forEach((el) => el.addEventListener('click', async () => {
-    if (el.dataset.saveAction === 'save') {
-      await t.saveSettings({ apiBase: state.apiBase });
-      showToast('配置已保存（当前可持久化项：后端 API 地址）');
-    } else if (el.dataset.saveAction === 'discard') showToast('已放弃当前页面修改');
-    else showToast('当前没有待保存变更');
-  }));
+  nav.innerHTML = CONFIG_SUBNAV.map(item => `<div class="subnav-item ${item.id === currentSub ? 'active' : ''}" data-sub="${item.id}">${item.label}</div>`).join('');
+  nav.querySelectorAll('.subnav-item').forEach(el => { el.onclick = () => { currentSub = el.dataset.sub; route(); }; });
 }
 
 // ---- 模型配置自动保存 ----
 // 字段一改就防抖保存；后端重启推迟到任务空闲时执行（避免杀掉正在跑的任务）。
 let _modelAutoSaveTimer = null;
-let _modelAutoSaveBusy = false;
+let _modelSaveRevision = 0;
+let _modelSaveQueue = Promise.resolve();
+let _modelQueuedPatch = null;
+let _lastSavedModelPatch = null;
 let _pendingBackendRestart = false;
+let _modelRestartPromise = null;
+let _modelApplyState = 'unchanged';
+let _modelStatus = { cls: 'gray', text: '自动保存' };
+let _lastModelApplication = { state: 'unchanged', cls: 'gray', text: '配置与已保存值一致' };
 
 function setAutoSaveStatus(cls, text) {
+  _modelStatus = { cls, text };
   const el = document.getElementById('model-autosave-status');
   if (!el) return;
   el.className = `tag ${cls}`;
-  el.innerHTML = `<span class="dot"></span>${text}`;
+  el.innerHTML = `<span class="dot"></span>${esc(text)}`;
 }
-
-function scheduleModelAutoSave() {
-  setAutoSaveStatus('warn', '有修改…');
-  clearTimeout(_modelAutoSaveTimer);
-  _modelAutoSaveTimer = setTimeout(() => { autoSaveModelConfig().catch(() => {}); }, 1000);
+function setModelApplicationState(next, cls, text) {
+  _modelApplyState = next;
+  _lastModelApplication = { state: next, cls, text };
+  setAutoSaveStatus(cls, text);
 }
-
-function buildModelPatch() {
-  const patch = {};
-  const modelEl = document.getElementById('m-model');
-  const pickedModel = modelEl && modelEl.value ? modelEl.value.trim() : '';
-  patch.llmMode = state.llmMode;
-  if (state.llmMode === 'local') {
-    const ollamaUrlEl = document.getElementById('m-ollama-url');
-    patch.llmOllamaUrl = (ollamaUrlEl && ollamaUrlEl.value.trim()) || 'http://localhost:11434/v1';
-    patch.llmLocalModel = pickedModel || state.llmLocalModel || 'qwen2.5:7b';
-    // 后端环境变量取 llmBaseUrl/llmModel，这里同步成当前生效值
+function buildModelPatch({ readForm = true } = {}) {
+  const mode = state.llmMode;
+  const value = id => readForm ? document.getElementById(id)?.value?.trim() : undefined;
+  const picked = value('m-model');
+  const patch = { llmMode: mode };
+  if (mode === 'local') {
+    patch.llmOllamaUrl = value('m-ollama-url') || state.llmOllamaUrl || 'http://localhost:11434/v1';
+    patch.llmLocalModel = picked || state.llmLocalModel || 'qwen2.5:7b';
     patch.llmBaseUrl = patch.llmOllamaUrl;
     patch.llmModel = patch.llmLocalModel;
-    // ⚠️ 不清空 llmApiKey：云端 Key 随云端界面单独保存，切模式不能丢
   } else {
-    const keyEl = document.getElementById('m-apikey');
-    const urlEl = document.getElementById('m-url');
-    patch.llmApiKey = keyEl ? keyEl.value.trim() : state.llmApiKey;
-    patch.llmCloudBaseUrl = (urlEl && urlEl.value.trim()) || state.llmCloudBaseUrl || 'https://dashscope.aliyuncs.com/compatible-mode/v1';
-    patch.llmCloudModel = pickedModel || state.llmCloudModel || 'qwen-plus';
+    const key = value('m-apikey');
+    patch.llmApiKey = key === undefined ? state.llmApiKey : key;
+    patch.llmCloudBaseUrl = value('m-url') || state.llmCloudBaseUrl || 'https://dashscope.aliyuncs.com/compatible-mode/v1';
+    patch.llmCloudModel = picked || state.llmCloudModel || 'qwen-plus';
     patch.llmBaseUrl = patch.llmCloudBaseUrl;
     patch.llmModel = patch.llmCloudModel;
   }
   return patch;
 }
-
+function applyModelPatchToState(patch) {
+  for (const [key,value] of Object.entries(patch)) if (value !== undefined && value !== null) state[key] = value;
+  if (patch.llmApiKey !== undefined && patch.llmApiKey !== null) state.llmApiKeySet = Boolean(patch.llmApiKey);
+}
 function patchEqualsState(patch) {
-  return patch.llmBaseUrl === (state.llmBaseUrl || '')
-    && patch.llmModel === (state.llmModel || '')
-    && (patch.llmApiKey === undefined || patch.llmApiKey === state.llmApiKey)
-    && (patch.llmOllamaUrl === undefined || patch.llmOllamaUrl === state.llmOllamaUrl)
-    && (patch.llmCloudBaseUrl === undefined || patch.llmCloudBaseUrl === state.llmCloudBaseUrl)
-    && (patch.llmCloudModel === undefined || patch.llmCloudModel === state.llmCloudModel)
-    && (patch.llmLocalModel === undefined || patch.llmLocalModel === state.llmLocalModel);
+  return Boolean(_lastSavedModelPatch && Object.entries(patch).every(([key,value]) => _lastSavedModelPatch[key] === value));
 }
-
-async function autoSaveModelConfig() {
-  if (_modelAutoSaveBusy) return;
-  // 字段已经不在页面上（用户切走了）就不保存，避免用过期 DOM 覆盖配置
-  if (!document.getElementById('m-model')) return;
-  const patch = buildModelPatch();
-  if (patchEqualsState(patch)) return;          // 没有实际变化 → 不动
-  _modelAutoSaveBusy = true;
-  setAutoSaveStatus('warn', '保存中…');
-  try {
-    await t.saveSettings(patch);
-    state.llmApiKeySet = Boolean(patch.llmApiKey) || state.llmApiKeySet;
-    if (patch.llmApiKey !== undefined) state.llmApiKey = patch.llmApiKey;
-    state.llmBaseUrl = patch.llmBaseUrl || '';
-    if (patch.llmCloudBaseUrl) state.llmCloudBaseUrl = patch.llmCloudBaseUrl;
-    if (patch.llmCloudModel) state.llmCloudModel = patch.llmCloudModel;
-    if (patch.llmLocalModel) state.llmLocalModel = patch.llmLocalModel;
-    state.llmModel = patch.llmModel || '';
-    if (patch.llmOllamaUrl) state.llmOllamaUrl = patch.llmOllamaUrl;
-    _modelCache.fetched = false;                // 配置变了，模型下拉要重新拉
-    // 任务执行中不重启后端（会杀掉正在跑的任务），标记稍后补做
-    if (state.busy || (state.execProgress && state.execProgress.active)) {
-      _pendingBackendRestart = true;
-      setAutoSaveStatus('warn', '已保存，任务结束后生效');
-    } else {
-      await t.restartBackend();
-      setAutoSaveStatus('ok', '已保存并生效');
-      showToast('模型配置已保存并生效');
-      if (currentPage === 'config' && currentSub === 'model') refreshModelField(true);
-    }
-  } catch (e) {
-    setAutoSaveStatus('err', '保存失败');
-    showToast(`保存失败：${e.message}`, 'error');
-  } finally {
-    _modelAutoSaveBusy = false;
+function scheduleModelAutoSave() {
+  _modelQueuedPatch = buildModelPatch();
+  applyModelPatchToState(_modelQueuedPatch);
+  _modelSaveRevision += 1;
+  _modelApplyState = 'draft';
+  setAutoSaveStatus('warn', '有修改，等待保存');
+  clearTimeout(_modelAutoSaveTimer);
+  _modelAutoSaveTimer = setTimeout(() => autoSaveModelConfig().catch(() => {}), 1000);
+}
+function bindModelFieldInput() {
+  const el = document.getElementById('m-model');
+  if (!el || el._modelSaveBound) return;
+  el._modelSaveBound = true;
+  el.addEventListener(el.tagName === 'SELECT' ? 'change' : 'input', scheduleModelAutoSave);
+}
+async function restartSavedModel(revision) {
+  if (revision !== _modelSaveRevision) return false;
+  if (state.busy || state.execProgress?.active || statusState.tasks.active) {
+    _pendingBackendRestart = true;
+    setModelApplicationState('pending', 'warn', '已保存，任务结束后生效');
+    return false;
   }
+  if (_modelRestartPromise) return _modelRestartPromise;
+  const pending = (async () => {
+    try {
+      // 同时检查其他窗口/会话发起的任务，不能仅凭当前输入框不忙就重启。
+      const progress = await api('/api/task-progress');
+      if (revision !== _modelSaveRevision) return false;
+      if (progress?.active || state.busy || state.execProgress?.active) {
+        _pendingBackendRestart = true;
+        setModelApplicationState('pending', 'warn', '已保存，任务结束后生效');
+        return false;
+      }
+      const result = await t.restartBackend();
+      if (revision !== _modelSaveRevision) return false;
+      _pendingBackendRestart = false;
+      if (result?.reused !== false) {
+        setModelApplicationState('external', 'warn', '已保存；外部后端未应用，请自行重启该服务');
+        return false;
+      }
+      setModelApplicationState('applied', 'ok', '已保存并应用到所属后端');
+      invalidateReadySnapshot();
+      fetchReadySnapshot({ force: true }).catch(() => {});
+      if (currentPage === 'config' && currentSub === 'model') refreshModelField(true).catch(() => {});
+      return true;
+    } catch (error) {
+      if (revision === _modelSaveRevision) {
+        _pendingBackendRestart = true;
+        setModelApplicationState('apply-failed', 'warn', `已保存，应用失败：${error.message}`);
+      }
+      return false;
+    }
+  })();
+  _modelRestartPromise = pending;
+  try { return await pending; } finally { if (_modelRestartPromise === pending) _modelRestartPromise = null; }
 }
-
-// 任务结束/空闲后补做被推迟的后端重启（状态栏轮询每 5s 调一次）
+function autoSaveModelConfig() {
+  clearTimeout(_modelAutoSaveTimer);
+  const patch = _modelQueuedPatch || (currentPage === 'config' && currentSub === 'model' && document.getElementById('m-model') ? buildModelPatch() : null);
+  if (!patch) return _modelSaveQueue;
+  _modelQueuedPatch = null;
+  const revision = _modelSaveRevision;
+  const pending = _modelSaveQueue.catch(() => {}).then(async () => {
+    if (patchEqualsState(patch)) {
+      if (revision === _modelSaveRevision) {
+        _modelApplyState = _lastModelApplication.state;
+        setAutoSaveStatus(_lastModelApplication.cls, _lastModelApplication.text);
+        if (_pendingBackendRestart) await restartSavedModel(revision);
+      }
+      return;
+    }
+    if (revision === _modelSaveRevision) { _modelApplyState = 'saving'; setAutoSaveStatus('warn','保存中…'); }
+    try {
+      await t.saveSettings(patch);
+      _lastSavedModelPatch = { ...(_lastSavedModelPatch || {}), ...patch };
+      _pendingBackendRestart = true;
+      // 磁盘配置更新后，即使被新草稿代次打断，仍需确认该配置是否实际应用。
+      _lastModelApplication = { state: 'pending', cls: 'warn', text: '已保存，等待应用到所属后端' };
+      if (revision !== _modelSaveRevision) return;
+      applyModelPatchToState(patch);
+      _modelCache.fetched = false;
+      await restartSavedModel(revision);
+    } catch (error) {
+      if (revision === _modelSaveRevision) {
+        _modelApplyState = 'save-failed';
+        setAutoSaveStatus('err', `保存失败：${error.message}`);
+        showToast(`保存失败：${error.message}`, 'error');
+      }
+      throw error;
+    }
+  });
+  _modelSaveQueue = pending;
+  return pending;
+}
 async function applyPendingBackendRestart() {
-  if (!_pendingBackendRestart) return;
-  if (state.busy || (state.execProgress && state.execProgress.active)) return;
-  _pendingBackendRestart = false;
-  try {
-    await t.restartBackend();
-    _modelCache.fetched = false;
-    setAutoSaveStatus('ok', '已保存并生效');
-    showToast('任务已结束，模型配置自动生效');
-    if (currentPage === 'config' && currentSub === 'model') refreshModelField(true);
-  } catch (e) { /* 下次轮询再试 */ _pendingBackendRestart = true; }
+  if (!_pendingBackendRestart || _modelQueuedPatch || !['pending','apply-failed'].includes(_modelApplyState)) return;
+  await restartSavedModel(_modelSaveRevision);
+}
+async function switchModelMode(next) {
+  if (next === state.llmMode) return;
+  clearTimeout(_modelAutoSaveTimer);
+  const previous = buildModelPatch();
+  applyModelPatchToState(previous);
+  state.llmMode = next;
+  _modelQueuedPatch = { ...previous, ...buildModelPatch({ readForm: false }) };
+  applyModelPatchToState(_modelQueuedPatch);
+  _modelSaveRevision += 1;
+  _modelFetchRevision += 1;
+  _modelApplyState = 'draft';
+  Object.assign(_modelCache, { fetched: false, models: [], error: '', backend: next });
+  setAutoSaveStatus('warn','连接方式已修改，等待保存');
+  if (currentPage === 'config' && currentSub === 'model') route();
+  await autoSaveModelConfig();
+}
+async function testModelConnection() {
+  await autoSaveModelConfig();
+  if (modelConfigurationPending()) throw new Error(_modelStatus.text);
+  const mode = state.llmMode;
+  const revision = _modelSaveRevision;
+  const backendGeneration = _overviewCache.generation;
+  const data = await fetchModels(true,mode);
+  if (mode !== state.llmMode || revision !== _modelSaveRevision || backendGeneration !== _overviewCache.generation) throw new Error('配置或后端已变化，请重新检查连接');
+  if (data.error) throw new Error(data.error);
+  return `${mode === 'local' ? '本地' : '云端'}模型列表可达（${data.models.length}项）；未执行推理测试`;
 }
 
 function bindConfigActions() {
-  // 模型服务页：页面已用缓存/手输即时渲染，这里只后台补齐下拉（不阻塞）
-  if (currentSub === 'model') refreshModelField();
-
-  document.querySelectorAll('[data-config-action="model-test"]').forEach((el) => el.addEventListener('click', async () => {
-    el.disabled = true; el.textContent = '测试中…';
+  if (currentSub === 'model') {
+    refreshModelField().catch(() => {});
+    setAutoSaveStatus(_modelStatus.cls, _modelStatus.text);
+  }
+  document.querySelectorAll('[data-config-action="model-test"]').forEach(el => el.addEventListener('click', async () => {
+    el.disabled = true;
+    el.textContent = '检查中…';
     const status = document.getElementById('conn-status');
-    const setStatus = (cls, label) => {
-      if (!status) return;
-      status.className = `tag ${cls}`;
-      status.innerHTML = `<span class="dot"></span>${label}`;
-    };
-    setStatus('gray', '测试中…');
     try {
-      // 1) 本地后端（毫秒级）
-      const health = await api('/api/health');
-      // 2) 远端 LLM（/api/models，后端 8s 超时）
-      let llmLabel = '远端 LLM 通';
-      let llmCls = 'ok';
-      try {
-        const m = await api('/api/models');
-        if (m.ok) {
-          llmLabel = `远端 LLM 通（${m.count} 个模型）`;
-        } else {
-          llmCls = 'warn';
-          llmLabel = '远端 LLM 不可达（仅规则对话可用）';
-        }
-      } catch (e) {
-        llmCls = 'warn';
-        llmLabel = '远端 LLM 探测失败（仅规则对话可用）';
-      }
-      setStatus(llmCls, `后端 ok；${llmLabel}`);
-      showToast(`后端 ok；${llmLabel}`);
-    } catch (e) {
-      setStatus('err', `后端失败：${e.message}`);
-      showToast(`后端失败：${e.message}`, 'error');
-    } finally { el.disabled = false; el.textContent = '测试连接'; }
+      const message = await testModelConnection();
+      if (status) { status.className = 'tag info'; status.textContent = message; }
+      showToast(message);
+    } catch (error) {
+      if (status) { status.className = 'tag warn'; status.textContent = error.message; }
+      showToast(`连接检查未通过：${error.message}`, 'error');
+    } finally { el.disabled = false; el.textContent = '检查连接'; }
   }));
-  // 重新向服务端拉取可用模型列表（换 Key / 换 Base URL 后使用）
-  document.querySelectorAll('[data-config-action="models-refresh"]').forEach((el) => el.addEventListener('click', async () => {
-    el.disabled = true; el.textContent = '拉取中…';
-    try {
-      const m = await fetchModels(true);
-      // 只替换模型字段，不重渲染整页（避免再次卡住）
-      await refreshModelField(true);
-      if (m.models.length) {
-        showToast(`已拉取 ${m.models.length} 个模型`);
-      } else {
-        showToast(`未拉到模型：${m.error || '未知原因'}`, 'error');
-      }
-    } catch (e) {
-      showToast(`刷新失败：${e.message}`, 'error');
-    } finally { el.disabled = false; el.textContent = '刷新模型列表'; }
+  document.querySelectorAll('[data-config-action="models-refresh"]').forEach(el => el.addEventListener('click', async () => {
+    el.disabled = true;
+    try { await autoSaveModelConfig(); if (modelConfigurationPending()) throw new Error(_modelStatus.text); await refreshModelField(true); showToast(_modelCache.error || '模型列表已刷新', _modelCache.error ? 'error' : 'info'); }
+    catch (error) { showToast(`刷新失败：${error.message}`, 'error'); }
+    finally { el.disabled = false; }
   }));
+
 
   // ---- 知识库：重建本地 RAG 索引（刷新标志 = ⟳ 旋转动画）----
   // 新增/修改 knowledge/ 下的文档后点它，索引才会更新。
   document.querySelectorAll('[data-config-action="kb-refresh"]').forEach((el) => el.addEventListener('click', async () => {
+    const pageRevision = routeToken;
     el.disabled = true;
     el.classList.add('is-refreshing');
     const label = el.querySelector('.btn-label');
@@ -2674,7 +2355,7 @@ function bindConfigActions() {
     try {
       const r = await api('/api/rag/ingest?force=true', 'POST');
       showToast(`索引已重建：${r.num_sources} 份文档 / ${r.num_chunks} 个片段`);
-      if (currentPage === 'config') route();
+      if (pageRevision === routeToken && currentPage === 'config' && currentSub === 'knowledge') route();
     } catch (e) {
       showToast(`重建失败：${e.message}`, 'error');
     } finally {
@@ -2702,11 +2383,12 @@ function bindConfigActions() {
   _stgUpdateSummary();
 
   document.querySelectorAll('[data-config-action="storage-rescan"]').forEach((el) => el.addEventListener('click', async () => {
+    const pageRevision = routeToken;
     el.disabled = true; el.textContent = '盘点中…';
     try {
       _storageCache.data = await api('/api/storage');
       showToast('盘点完成');
-      route();
+      if (pageRevision === routeToken && currentPage === 'config' && currentSub === 'storage') route();
     } catch (e) {
       showToast(`盘点失败：${e.message}`, 'error');
       el.disabled = false; el.textContent = '重新盘点';
@@ -2714,6 +2396,7 @@ function bindConfigActions() {
   }));
 
   document.querySelectorAll('[data-config-action="storage-archive"]').forEach((el) => el.addEventListener('click', async () => {
+    const pageRevision = routeToken;
     const items = _stgSelected();
     if (!items.length) { showToast('请先勾选要归档的条目', 'error'); return; }
     const total = items.reduce((s, it) => {
@@ -2721,7 +2404,7 @@ function bindConfigActions() {
       const hit = g.find((x) => x.path === it.path);
       return s + (hit ? hit.size_bytes : 0);
     }, 0);
-    if (!window.confirm(`将归档 ${items.length} 项（约 ${fmtBytes(total)}）到 _archive/。\n\n这是移动操作，不删除，可回滚。确认继续？`)) return;
+    if (!window.confirm(`将归档 ${items.length} 项（约 ${fmtBytes(total)}）到 _archive/。\n\n这是移动操作，不删除，归档后可手动移回。确认继续？`)) return;
     el.disabled = true; el.textContent = '归档中…';
     try {
       const r = await api('/api/storage/archive', 'POST', { items, confirm: true });
@@ -2731,7 +2414,7 @@ function bindConfigActions() {
       }
       _storageCache.data = null;
       _storageCache.data = await api('/api/storage');
-      route();
+      if (pageRevision === routeToken && currentPage === 'config' && currentSub === 'storage') route();
     } catch (e) {
       showToast(`归档失败：${e.message}`, 'error');
       el.disabled = false; el.textContent = '归档选中项';
@@ -2747,46 +2430,31 @@ function bindConfigActions() {
     el.title = _apikeyRevealed ? '隐藏明文（防止截图泄露）' : '显示明文（用于核对）';
   }));
 
-  // ---- 模式切换（云端 / 本地 Ollama）----
-  document.querySelectorAll('input[name="llm-mode"]').forEach((el) => el.addEventListener('change', () => {
-    const next = el.value === 'local' ? 'local' : 'cloud';
-    if (next === state.llmMode) return;
-    state.llmMode = next;
-    // 切模式后模型列表要重新拉
-    _modelCache.fetched = false;
-    _modelCache.models = [];
-    if (currentPage === 'config' && currentSub === 'model') route();
+  document.querySelectorAll('input[name="llm-mode"]').forEach(el => el.addEventListener('change', () => {
+    switchModelMode(el.value === 'local' ? 'local' : 'cloud').catch(error => showToast(`连接方式保存失败：${error.message}`, 'error'));
   }));
-
-  // ---- 外接大模型配置：API Key / Base URL / 模型名 ----
-  // 自动保存：字段改动 → 防抖保存 → 任务空闲时自动重启后端生效（不再需要手动按钮）
-  ['m-apikey', 'm-url', 'm-model', 'm-ollama-url'].forEach((id) => {
+  ['m-apikey','m-url','m-ollama-url'].forEach(id => {
     const el = document.getElementById(id);
-    if (!el) return;
-    const ev = el.tagName === 'SELECT' ? 'change' : 'input';
-    el.addEventListener(ev, scheduleModelAutoSave);
+    if (el) el.addEventListener('input',scheduleModelAutoSave);
   });
-
-  document.querySelectorAll('[data-config-action="health"]').forEach((el) => el.addEventListener('click', async () => {
+  bindModelFieldInput();
+  document.querySelectorAll('[data-config-action="health"]').forEach(el => el.addEventListener('click',async () => {
     el.disabled = true; el.textContent = '检测中…';
+    try { await fetchReadySnapshot({ force: true }); showToast('环境状态已刷新；检测范围见各项说明'); }
+    catch(error) { showToast(`环境检测失败：${error.message}`, 'error'); }
+    finally { el.disabled = false; el.textContent = '刷新环境状态'; }
+  }));
+  document.querySelectorAll('[data-config-action="open-logs"]').forEach(el => el.addEventListener('click',async () => {
+    el.disabled = true;
     try {
-      await api('/api/cases');
-      showToast('后端可达，算例目录读取正常');
-    } catch (e) { showToast(`环境检测失败：${e.message}`, 'error'); }
-    finally { el.disabled = false; el.textContent = '一键环境检测'; }
+      const result = await t.openLogsDirectory();
+      if (!result?.ok) throw new Error(result?.error || '日志目录未能打开');
+      showToast('已打开应用日志目录；原始日志未经脱敏');
+    } catch(error) { showToast(`打开日志目录失败：${error.message}`, 'error'); }
+    finally { el.disabled = false; }
   }));
-  document.querySelectorAll('[data-config-action="export"]').forEach((el) => el.addEventListener('click', async () => {
-    const settings = await t.getSettings();
-    const blob = new Blob([JSON.stringify({ apiBase: settings.apiBase }, null, 2)], { type: 'application/json' });
-    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'tianshu-settings-redacted.json'; a.click(); URL.revokeObjectURL(a.href);
-    showToast('已导出脱敏配置');
-  }));
-  document.querySelectorAll('[data-config-action="reset"]').forEach((el) => el.addEventListener('click', async () => {
-    await t.saveSettings({ apiBase: 'http://127.0.0.1:8000' }); state.apiBase = 'http://127.0.0.1:8000'; showToast('已恢复默认后端地址');
-  }));
-  document.querySelectorAll('[data-config-action="import"]').forEach((el) => el.addEventListener('click', () => showToast('导入配置将在下一步接入文件选择器')));
-  document.querySelectorAll('#savebar .btn').forEach((el) => el.addEventListener('click', () => showToast('当前页面无待保存的后端配置')));
 }
+
 
 /* ------------------------------------------------------------
    异步页面的加载占位 / 失败兜底
@@ -2816,7 +2484,7 @@ function routeErrorHtml(err) {
       <div class="card-title">这个页面没能加载出来</div>
       <div style="padding:12px 0;font-size:13px;color:var(--text-muted)">
         <div style="margin-bottom:8px">出错信息：<code>${msg}</code></div>
-        <div style="font-size:12.5px">其它页面不受影响；也可以到「日志与诊断」查看具体情况。</div>
+        <div style="font-size:12.5px">其它页面不受影响；也可以到「关于与诊断」查看具体情况。</div>
       </div>
       <button class="btn sm primary" data-route-retry="1">重试</button>
     </div>`;
@@ -2854,7 +2522,8 @@ function route() {
   });
   const body = document.getElementById('page-body');
   if (currentPage === 'config') {
-    const fn = PAGE_RENDER[currentSub] || pageOverview;
+    if (!PAGE_RENDER[currentSub]) currentSub = 'overview';
+    const fn = PAGE_RENDER[currentSub];
     const label = CONFIG_SUBNAV.find((i) => i.id === currentSub)?.label || '总览与环境检测';
     renderAsyncPage(body, label, fn, () => {
       bindConfigActions();
@@ -2902,6 +2571,7 @@ route();
 (async function bootstrap() {
   const settings = await t.getSettings().catch(() => ({ apiBase: 'http://127.0.0.1:8000' }));
   state.apiBase = settings.apiBase || state.apiBase;
+  invalidateReadySnapshot();
   // 主进程回传明文（本机自用场景，用户要求在配置页可见）
   state.llmApiKeySet = Boolean(settings.llmApiKeySet);
   state.llmApiKey = settings.llmApiKey || '';
@@ -2912,23 +2582,27 @@ route();
   state.llmModel = settings.llmModel || '';
   state.llmMode = settings.llmMode === 'local' ? 'local' : 'cloud';
   state.llmOllamaUrl = settings.llmOllamaUrl || state.llmOllamaUrl;
+  _lastSavedModelPatch = { ...settings, llmMode: state.llmMode };
+  if (currentPage === 'config' && currentSub === 'model') route();
+  fetchReadySnapshot({ force: true }).catch(() => {});
   try {
-    await api('/api/cases');
+    await fetchReadySnapshot();
     hideBootOverlay();
     if (currentPage === 'workbench') await loadSessions();
   } catch (e) {
     // 后端还没起来是首次启动的正常中间状态，不弹错误遮罩，等 backend:ready 再补加载
-    updateBackendStatus(false, e.message);
     hideBootOverlay();
   }
 })();
 
 // 后端就绪后补加载，避免首次启动时会话列表为空
 t.onBackendReady?.(async (info) => {
+  invalidateReadySnapshot();
+  statusRefreshInFlight = false;
   setBootMessage('后端已就绪，正在加载数据…');
   if (info?.restarted) showToast('后端已自动重启，之前的任务已中断，请重新发送');
   try {
-    await api('/api/cases');
+    await fetchReadySnapshot({ force: true });
     await refreshStatusBar();
     if (currentPage === 'workbench') await loadSessions();
     hideBootOverlay();
@@ -2944,6 +2618,8 @@ t.onBackendProgress?.((info) => {
 });
 
 t.onBackendError?.((message) => {
+  invalidateReadySnapshot();
+  applyReadySnapshot(null, String(message));
   setBootMessage(`后端启动失败：${message}`, true);
   showToast(`后端启动失败：${message}`, 'error');
   // 后端崩了（例如 dss 原生库段错误）：在途请求永远不会返回，

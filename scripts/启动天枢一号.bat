@@ -1,3 +1,4 @@
 @echo off
-REM Entry point at project level. Delegates to the desktop-shell launcher.
-call "%~dp0..\tianshu_ui\start-tianshu.bat" %*
+REM Harness is the main professional entry. Legacy UI: start-legacy.bat.
+node "%~dp0start-harness.js" %*
+exit /b %errorlevel%

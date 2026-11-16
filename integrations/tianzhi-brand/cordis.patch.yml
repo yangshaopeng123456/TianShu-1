@@ -1,0 +1,6 @@
+# Replace the official brand occupant using the public client slot API.
+- id: ui-brand-official
+  disabled: true
+- insert:
+    - id: ui-brand-tianzhi
+      name: '@yangshaopeng/tianzhi-brand'

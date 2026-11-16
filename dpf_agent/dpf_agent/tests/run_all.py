@@ -32,6 +32,8 @@ SUITES: list[tuple[str, str]] = [
     ("test_process_isolation", "任务COM隔离：真实子进程 / 超时取消回收 / Job父崩溃 / 持久上下文"),
     ("test_batch_scheduler", "批量队列：SQLite持久化 / 逐项取消重试 / 依赖冻结 / 重启恢复"),
     ("test_task_recovery_api", "任务详情：在途空状态 / 当前锁归属 / 重启中断只读恢复 / 终态保留"),
+    ("test_readiness", "就绪度真实性：禁用与配置分离 / 检索索引 / 实际后端版本"),
+    ("test_case_name_routing", "算例身份：完整名字 / 精确上传匹配 / 历史继承 / 本机可用默认"),
     ("test_case_data_dependencies", "DSS数据依赖：CSV/二进制冻结 / 内容指纹 / 缺失与逃逸拒绝"),
     ("test_conversion_fidelity", "转换扩展：Gs/Bs / π充电 / 正序相移 / Q策略 / 铭牌来源"),
     ("test_fidelity_mapping", "保真结果映射：源对象身份 / 真实端口聚合 / 并联导纳分列"),

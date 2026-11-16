@@ -20,5 +20,7 @@ contextBridge.exposeInMainWorld('tianshu', {
   getSettings: () => ipcRenderer.invoke('settings:get'),
   saveSettings: (value) => ipcRenderer.invoke('settings:save', value),
   restartBackend: () => ipcRenderer.invoke('backend:restart'),
+  getAppInfo: () => ipcRenderer.invoke('app:info'),
+  openLogsDirectory: () => ipcRenderer.invoke('logs:open-directory'),
   openExternal: (url) => ipcRenderer.invoke('external:open', url),
 });

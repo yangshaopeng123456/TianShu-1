@@ -1,0 +1,19 @@
+# Dedicated preset: tools and instructions do not enter standard/creator chat.
+- insert:
+    - id: preset-tianshu-distribution
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: tianshu-distribution
+        name: 天智五号
+        description: 三相潮流、曲线准静态计算、工程校核、工况比较与可追溯报告
+        order: 20
+        plugins:
+          - id: tianshu-native-tools
+            name: '@yangshaopeng/tianshu-harness'
+            config: {}
+          - id: tianshu-native-presentation
+            name: '@deepseek-ai/dsh-agent-tool-presentation'
+            config:
+              mode: native
+          - id: tianshu-ask-user
+            name: '@deepseek-ai/dsh-tool-ask-user'

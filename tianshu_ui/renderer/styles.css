@@ -245,15 +245,6 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--primary); }
 .tag.gray { background: #EEF1F5; color: var(--text-muted); }
 .tag .dot { width: 6px; height: 6px; }
 
-/* 底部固定保存栏 */
-#savebar {
-  position: sticky; bottom: 0; background: var(--card);
-  border-top: 1px solid var(--border); padding: 10px 20px;
-  display: flex; align-items: center; gap: 12px; z-index: 10;
-}
-#savebar .hint { color: var(--text-muted); font-size: 12px; }
-#savebar .right { margin-left: auto; display: flex; gap: 10px; }
-
 /* 开关 */
 .switch { position: relative; width: 38px; height: 20px; display: inline-block; }
 .switch input { display: none; }

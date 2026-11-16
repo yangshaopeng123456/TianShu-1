@@ -33,17 +33,18 @@ async function healthy(base){
 async function listen(server,port=0){await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(port,'127.0.0.1',resolve);});return server.address().port;}
 async function close(server){if(server.listening)await new Promise(resolve=>server.close(resolve));}
 
-function mainAdapter(options={}){
+function mainAdapter({fileSystem: fsOverrides={}, shell: shellOverrides={}, ...options}={}){
   const children=[],notifications=[],logs=[],handlers=new Map();let manager,quitCalls=0;
   class TestLifecycle extends BackendLifecycle { constructor(deps){super({...deps,stopTimeoutMs:100,startTimeoutMs:100,pollMs:2,listening:async()=>false,terminate:async child=>child.emit('exit',0,null),...options});manager=this;} }
-  const app=new EventEmitter();Object.assign(app,{isPackaged:false,getPath:()=>'/test-user-data',whenReady:()=>Promise.resolve(),quit:()=>{quitCalls++;}});
+  const app=new EventEmitter();Object.assign(app,{isPackaged:false,getVersion:()=> 'fixture-ui-version',getPath:()=>'/test-user-data',whenReady:()=>Promise.resolve(),quit:()=>{quitCalls++;}});
   const windows=[];
   class Window extends EventEmitter {constructor(){super();this.webContents=new EventEmitter();this.webContents.send=(channel,payload)=>notifications.push({channel,payload});this.webContents.setWindowOpenHandler=()=>{};windows.push(this);}loadFile(){}show(){}isDestroyed(){return false;}static getAllWindows(){return windows;}}
-  const fileSystem={mkdirSync(){},appendFileSync(_file,text){logs.push(text);},readFileSync(){return '{}';},existsSync(){return true;},createWriteStream(){return new EventEmitter();}};
+  const fileSystem={mkdirSync(){},appendFileSync(_file,text){logs.push(text);},readFileSync(file){return file.endsWith('__init__.py')?'__version__ = "fixture-backend-version"':'{}';},statSync(){return {isDirectory:()=>true};},existsSync(){return true;},createWriteStream(){return new EventEmitter();},...fsOverrides};
+  const opened=[];const shell={openPath:async folder=>{opened.push(folder);return '';},...shellOverrides};
   const transport={request(_args,callback){const request=new EventEmitter();request.end=()=>queueMicrotask(()=>{if(!manager?.current?.child.ready){request.emit('error',new Error('test unavailable'));return;}const response=new EventEmitter();response.statusCode=200;response.setEncoding=()=>{};callback(response);response.emit('data','{}');response.emit('end');});return request;}};
-  const context={require(name){if(name==='electron')return {app,BrowserWindow:Window,ipcMain:{handle:(name,fn)=>handlers.set(name,fn),on(){}},shell:{},dialog:{showErrorBox:()=>{}}};if(name==='./backend_lifecycle')return {BackendLifecycle:TestLifecycle};if(name==='fs')return fileSystem;if(name==='path')return path;if(name==='http'||name==='https')return transport;if(name==='child_process')return {spawn(){const child=new EventEmitter();child.pid=4000+children.length;child.ready=true;child.stdout={pipe(){}};child.stderr={pipe(){}};children.push(child);return child;}};throw new Error(`Unexpected module ${name}`);},__dirname:__dirname,process:{platform:'win32',pid:99,env:{APPDATA:'/test'},versions:{electron:'test',node:process.versions.node}},setTimeout,clearTimeout,Buffer,URL,console};
+  const context={require(name){if(name==='electron')return {app,BrowserWindow:Window,ipcMain:{handle:(name,fn)=>handlers.set(name,fn),on(){}},shell,dialog:{showErrorBox:()=>{}}};if(name==='./backend_lifecycle')return {BackendLifecycle:TestLifecycle};if(name==='fs')return fileSystem;if(name==='path')return path;if(name==='http'||name==='https')return transport;if(name==='child_process')return {spawn(){const child=new EventEmitter();child.pid=4000+children.length;child.ready=true;child.stdout={pipe(){}};child.stderr={pipe(){}};children.push(child);return child;}};throw new Error(`Unexpected module ${name}`);},__dirname:__dirname,process:{platform:'win32',pid:99,env:{APPDATA:'/test'},versions:{electron:'test',node:process.versions.node}},setTimeout,clearTimeout,Buffer,URL,console};
   vm.runInNewContext(fs.readFileSync(path.join(__dirname,'main.js'),'utf8'),context,{filename:'main.js'});
-  return {app,children,notifications,logs,handlers,windows,get manager(){return manager;},get quitCalls(){return quitCalls;}};
+  return {app,children,notifications,logs,handlers,windows,opened,get manager(){return manager;},get quitCalls(){return quitCalls;}};
 }
 async function mainSettled(h){await flush();await h.manager.queue;await flush();}
 
@@ -161,6 +162,25 @@ test('[真实独立Node进程] 平台停止命令成功后确有actual exit',asy
 
 test('[纯函数] 仅本地默认http8000作为managed，其他端口/协议/路径均external',async()=>{
   assert(isManagedBase('http://127.0.0.1:8000'));assert(isManagedBase('http://localhost:8000/'));for(const base of ['http://localhost:18002','https://127.0.0.1:8000','http://example.test:8000','http://127.0.0.1:8000/sub'])assert.equal(isManagedBase(base),false);
+});
+
+test('[main真实源码VM适配] app info区分代码版本与实际归属且不暴露凭据',async()=>{
+  const h=mainAdapter();await mainSettled(h);
+  const getInfo=h.handlers.get('app:info');const own=getInfo();
+  assert.equal(own.appVersion,'fixture-ui-version');assert.equal(own.backendCodeVersion,'fixture-backend-version');
+  assert.equal(own.backend.ownership,'owned');assert.equal(own.backend.base,'http://127.0.0.1:8000');
+  assert.equal(own.logs.available,true);assert.equal('llmApiKey' in own,false);assert.equal('settings' in own,false);
+  h.manager.probeReady=async()=>true;const external=await h.handlers.get('backend:restart')();assert.equal(external.reused,true);
+  assert.equal(getInfo().backend.ownership,'external');assert.equal(h.children.length,1);await h.manager.shutdown();
+});
+
+test('[main真实源码VM适配] 日志IPC只打开固定应用目录并如实返回失败',async()=>{
+  const h=mainAdapter();await mainSettled(h);const open=h.handlers.get('logs:open-directory');
+  assert.equal((await open({},'C:/untrusted')).ok,true);assert.deepEqual(h.opened,['/test-user-data']);await h.manager.shutdown();
+  const missing=mainAdapter({fileSystem:{statSync(){throw new Error('ENOENT');}}});await mainSettled(missing);
+  assert.equal((await missing.handlers.get('logs:open-directory')()).ok,false);assert.equal(missing.opened.length,0);await missing.manager.shutdown();
+  const failed=mainAdapter({shell:{openPath:async()=> 'OS open failed'}});await mainSettled(failed);
+  const result=await failed.handlers.get('logs:open-directory')();assert.equal(result.ok,false);assert.match(result.error,/无法打开/);await failed.manager.shutdown();
 });
 
 test('[main真实源码VM适配] restart IPC等待child退出才通知ready，没有固定1.5s复用',async()=>{

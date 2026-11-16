@@ -320,6 +320,7 @@ def run_fixed_powerflow_skill(
     tracer: Tracer,
     guard: RuleGuard,
     progress_cb: Callable[[str, str, int], None] | None = None,
+    strict_progress: bool = False,
 ) -> SkillResult:
     """执行固定工作流。失败时按文档 12.2 状态机映射失败语义并抛出 ToolFailure。
 
@@ -333,6 +334,8 @@ def run_fixed_powerflow_skill(
         try:
             progress_cb(stage, label, percent)
         except Exception:  # pragma: no cover - 进度只是提示，绝不能影响主流程
+            if strict_progress:
+                raise
             pass
 
     result = SkillResult()
@@ -422,6 +425,8 @@ def run_fixed_powerflow_skill(
                     if not can_replan:
                         break
                     candidates = [a for a in _REPLAN_ACTIONS if a["id"] not in replan_tried]
+                    if ctx.allowed_recovery_actions is not None:
+                        candidates = [a for a in candidates if a["id"] in ctx.allowed_recovery_actions]
                     # 用户显式指定的参数不能通过恢复路径绕过硬约束。
                     numeric_params = _numeric_replan_params(ctx)
                     current_params = (

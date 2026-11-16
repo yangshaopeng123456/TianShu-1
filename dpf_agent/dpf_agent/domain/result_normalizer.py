@@ -93,9 +93,12 @@ def normalize_powerflow_result(
             _pairs = [(int(n), v, (_angs[i] if i < len(_angs) else None))
                       for i, (n, v) in enumerate(zip(raw_nodes, _vals))
                       if _is_valid_number(v)]
-            labels = [_PHASE_LABEL_BY_NODE.get(n) for n, _, _ in _pairs]
-            if any(x is None for x in labels):        # 出现 1~3 以外的节点号：退回位置法
-                labels = list(_PHASE_LABELS[:len(_pairs)])
+            # This legacy A/B/C view only represents nodes 1/2/3. Other native
+            # nodes may be neutrals or arbitrary conductor identities; mapping
+            # them by position invents phases and creates mismatched arrays.
+            # Full native-node data remains in raw/professional observations.
+            _pairs = [(n, v, a) for n, v, a in _pairs if n in _PHASE_LABEL_BY_NODE]
+            labels = [_PHASE_LABEL_BY_NODE[n] for n, _, _ in _pairs]
         else:                                          # 旧通道未提供节点号：保持原行为
             _pairs = [(i + 1, v, (_angs[i] if i < len(_angs) else None))
                       for i, v in enumerate(_vals) if _is_valid_number(v)]
@@ -106,7 +109,11 @@ def normalize_powerflow_result(
             bus_results.append(BusResult(name=b["name"], status="unavailable"))
             continue
         base_kv = b.get("base_kv")
-        metrics = compute_metrics(pu_vals, angle_vals)
+        # Symmetrical components require the legacy node-1/2/3 order even
+        # when OpenDSS returns bus nodes in a different insertion order.
+        metric_pairs = sorted(_pairs, key=lambda item: item[0])
+        metrics = compute_metrics([v for _, v, _ in metric_pairs],
+                                  [a for _, _, a in metric_pairs if _is_valid_number(a)])
         n_ph = len(pu_vals)
         bus_results.append(
             BusResult(
@@ -205,6 +212,22 @@ def normalize_powerflow_result(
 
     # --- 系统汇总 ---------------------------------------------------------------
     sys_raw = raw.system
+    from .passive_power_balance import build_passive_power_boundary, validate_passive_power_boundary
+    passive_boundary = sys_raw.get("passive_power_boundary")
+    if passive_boundary is None and raw.auxiliary_elements is not None:
+        passive_boundary = build_passive_power_boundary({"solver":raw.solver, "buses":raw.buses,
+            "lines":raw.lines, "transformers":raw.transformers, "auxiliary_elements":raw.auxiliary_elements})
+    # A modern collector cannot erase the evidence to regain legacy zero shunts.
+    try:
+        modern_boundary_required = tuple(int(n) for n in raw.collector_version.split(".")[:3]) >= (1, 8, 2)
+    except (ValueError, AttributeError):
+        modern_boundary_required = False
+    if passive_boundary is not None or modern_boundary_required:
+        try:
+            validate_passive_power_boundary(passive_boundary)
+        except (ValueError, TypeError, KeyError, AttributeError, OverflowError):
+            passive_boundary = {"version":"1.0", "status":"not_verified",
+                "issues":[{"code":"complete_native_passive_power_not_verified"}]}
     ok_buses = [b for b in bus_results if b.status == "ok" and b.voltage_pu is not None]
     min_b = min(ok_buses, key=lambda b: b.voltage_pu) if ok_buses else None
     max_b = max(ok_buses, key=lambda b: b.voltage_pu) if ok_buses else None
@@ -231,7 +254,7 @@ def normalize_powerflow_result(
         if _is_valid_number(total_gen_kw) and _is_valid_number(total_loss_kw)
         else None
     )
-    if total_load_kw is None:
+    if total_load_kw is None and passive_boundary is None and not modern_boundary_required:
         total_load_kw = legacy_derived
     # 净负荷独立字段：始终按"源侧 − 网损"给出，作为功率平衡的参照量。
     net_load_kw = legacy_derived
@@ -254,6 +277,7 @@ def normalize_powerflow_result(
             if worst_pair is None or _v < worst_pair[0]:
                 worst_pair = (float(_v), _b.name, _lbl)
     result.system_summary = SystemSummary(
+        passive_power_boundary=passive_boundary,
         total_shunt_kw=sys_raw.get("shunt_kw"),
         total_shunt_kvar=sys_raw.get("shunt_kvar"),
         shunt_elements=sys_raw.get("shunt_elements"),

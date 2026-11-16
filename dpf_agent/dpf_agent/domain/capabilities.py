@@ -121,8 +121,8 @@ CAPABILITIES: tuple[CapabilityEntry, ...] = (
         title="三相不平衡（分相建模与不对称度）",
         status=_status_from_enum(Capability.THREE_PHASE_UNBALANCED),
         aliases=("三相", "分相", "不平衡", "不对称", "unbalance", "负序", "零序", "单相"),
-        detail="**能做** —— 这本来就是 OpenDSS 的强项，本系统按三相原生模型求解"
-               "（不是正序等值），结果保留**每条母线的分相电压与相角**。\n"
+        detail="**能做，但取决于输入模型**：原生 `.dss` 按算例模型求解，"
+               "结果保留母线实际存在相的电压与相角。\n"
                "· **指标**：用对称分量法给出不平衡度 ε = |U₂| / |U₁| × 100%"
                "（与 IEC 61000-4-30、GB/T 15543 对「电压不平衡度」的口径一致），"
                "并汇总最严重母线、超限清单。\n"
@@ -132,11 +132,12 @@ CAPABILITIES: tuple[CapabilityEntry, ...] = (
                "**边界（必须说清，避免误解）**：\n"
                "· 限值 **2% 是参考值，尚待与 GB/T 15543 原文核对**，只作标注，"
                "不构成「合格 / 不合格」的权威判定；\n"
-               "· 若算例由 **xlsx / csv / json / MATPOWER** 转换而来，转换器目前映射为"
-               "**平衡三相等值模型**，原始文件里的相别信息（单相负荷接在哪一相、零序参数 R0/X0）"
-               "不会被保留 —— 报告会显式声明这一点；\n"
-               "· **原生 `.dss` 算例没有上述限制**，其模型本身分相，分相结果完整。",
-        evidence="web/phase_model.py；domain/unbalance；8 个分相算例端到端回归",
+               "· **xlsx / csv / json** 表格转换路径支持显式相别、相数及支持的零序参数；"
+               "有相别时按输入相别建模，没有相别时采用**平衡三相等值模型**。"
+               "MATPOWER 静态矩阵按其平衡模型转换，不凭空补出分相数据；\n"
+               "· 转换报告声明本次实际建模方式；单相/两相、接线及零序参数须符合输入规范。"
+               "连续相移专用等值只支持平衡正序，不能与不平衡、显式零序参数或额外 delta 接线混用。",
+        evidence="web/case_converters.py；web/phase_model.py；domain/unbalance；test_phase_modeling",
     ),
     CapabilityEntry(
         key="voltage_dependent_load",
@@ -151,12 +152,12 @@ CAPABILITIES: tuple[CapabilityEntry, ...] = (
     # ---------------- 暂不支持（later_phase / research_only）----------------
     CapabilityEntry(
         key="auto_control",
-        title="自动控制（分接头 / 无功补偿 / 重调度 / 削负荷 / 拓扑重构）",
+        title="自动控制（分接头 / 无功补偿与优化 / 重调度 / 削负荷 / 拓扑重构）",
         status=_status_from_enum(Capability.AUTO_CONTROL),
-        aliases=("自动分接头", "有载调压", "无功补偿", "电容器投切", "重调度", "削负荷",
+        aliases=("自动分接头", "有载调压", "无功补偿", "无功优化", "优化无功", "最优无功", "电容器投切", "重调度", "削负荷",
                  "拓扑重构", "网络重构", "重构", "oltc", "调压"),
-        detail="**不做**：V1.3 不执行自动分接头调节、无功补偿投切、重调度、削负荷与拓扑重构"
-               "（`control_behavior=frozen_off`）。若把这些词写进指令，请求门会直接拒绝并说明原因。\n"
+        detail="**不做**：当前不执行自动分接头调节、无功补偿投切、无功优化、重调度、削负荷与拓扑重构"
+               "（`control_behavior=frozen_off`）。\n"
                "需要区分的是：**静态分接头建模是支持的** —— 算例里给定的 tap / 变比会照常参与求解，"
                "不支持的只是\"让程序自己去调它\"。",
         evidence="runtime/guard.py（_FORBIDDEN_CAPABILITY_KEYWORDS）；domain/solver_profile.py",
@@ -233,15 +234,34 @@ CAPABILITIES: tuple[CapabilityEntry, ...] = (
     ),
     CapabilityEntry(
         key="q_limits",
-        title="发电机无功限值（Q 限值与 PV→PQ）",
+        title="发电机静态无功限值与显式容量约束",
+        status="conditional",
+        aliases=("q限值", "q限制", "qmax", "qmin", "无功限值", "无功限额", "无功约束",
+                 "enforce_q_limits", "无功"),
+        detail="**有条件支持静态限值**：可报告求解得到的无功；以下强制策略只针对本系统的"
+               "**表格 / MATPOWER 转换路径**，不代表给任意原生 `.dss` 自动加上约束。\n"
+               "· 显式设置 `ENFORCE_Q_LIMITS=1` 时，非 Slack PV 发电机使用完整输入的 Qmin/Qmax；"
+               "固定 PQ 发电机检查给定 Q 的可行性。缺上下界、上下界倒置或无可行交集会拒绝；\n"
+               "· 提供 `gen_rating_mva` / `gen_rating_kva` 时，在给定 P 下施加容量圆约束"
+               " |Q|≤sqrt(S²−P²)，显式容量在非强制模式也生效；\n"
+               "· 默认非强制 Q 模式使用有限数值边界；这些边界、缺省 native kVA 及 MATPOWER mBase"
+               "不代表设备真实铭牌容量。理想 Slack 的设备 Q 约束和非零 P-Q 能力曲线不支持；\n"
+               "· 这不等同于通用 PV/PQ 外层迭代，也**不支持自动无功优化**。"
+               "潮流收敛不能直接当作工程无功可行性或安全结论。",
+        evidence="web/case_converters.py（_generator_q_policy）；test_conversion_fidelity",
+    ),
+    CapabilityEntry(
+        key="pv_pq_switching",
+        title="通用 PV/PQ 外层切换与迭代",
         status="not_supported",
-        aliases=("q限值", "qmax", "qmin", "无功限值", "pv转pq", "pv→pq", "无功约束",
-                 "无功优化", "无功"),
-        detail="**尚未完整执行**：当前版本不施加发电机 Q 限值约束、也不做 PV→PQ 外层迭代。"
-               "基态潮流可以收敛，但**不能据此声称已完成无功可行性验证**。"
-               "若强制限值后发散，应先判断无功可行域 / 电压稳定裕度不足，同时排查数值条件，"
-               "而不是简单归因于算法失败。",
-        evidence="域模型无 PV→PQ 外循环；报告口径声明未包含项",
+        aliases=("pv转pq", "pv→pq", "pv->pq", "pv/pq", "pv-pq", "pvtopq", "pv_to_pq"),
+        detail="**不支持通用 PV/PQ 外层迭代**：没有按 Q 限值反复切换母线类型并恢复电压控制的"
+               "通用 MATPOWER 式外循环；转换路径已有的静态 Q 策略应按其自身边界理解。\n"
+               "已有一项**受限未收敛恢复**：在可安全识别的 `Generator` 字面定义中，将"
+               "`Model=3` 改为 `Model=1` 后重编译，并记录模型变化、重新求解与验证。"
+               "它只在恢复条件满足时适用，会改变电压控制语义，不能称为通用限值触发切换，"
+               "也不能将降级结果冒充原模型结果。",
+        evidence="skills/powerflow_skill.py（_downgrade_pv_voltage_control）；test_recovery_verification",
     ),
 )
 
@@ -277,6 +297,15 @@ def match(text: str) -> CapabilityEntry | None:
         return None
     if any(w in compact for w in _QUALIFIER_GUARD):
         return None
+    # 明确的受限/未支持主题优先于格式、元件等宽泛别名。
+    # 否则「MATPOWER 支持 PV→PQ 吗」会被更长的 matpower 别名答成“能读格式”。
+    for key, aliases in (
+        ("pv_pq_switching", _BY_KEY["pv_pq_switching"].aliases),
+        ("auto_control", ("无功优化", "优化无功", "最优无功")),
+        ("q_limits", tuple(a for a in _BY_KEY["q_limits"].aliases if a != "无功")),
+    ):
+        if any(a in compact for a in aliases):
+            return _BY_KEY[key]
     best: tuple[int, CapabilityEntry] | None = None
     for e in CAPABILITIES:
         for a in e.aliases:
@@ -286,7 +315,7 @@ def match(text: str) -> CapabilityEntry | None:
                     best = (len(al), e)
     if best is None:
         return None
-    # 同一长度下多条目命中（例如"无功"同时属于 q_limits 与 auto_control）时，
+    # 同一长度下多条目命中时，
     # 取清单中**更靠前**的条目 —— 清单顺序即优先级，避免结果随字典顺序漂移。
     hit_len = best[0]
     for e in CAPABILITIES:

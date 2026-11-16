@@ -43,7 +43,10 @@ from .base import BaseTool
 def _raw_payload(raw: OpenDSSRawResult, cache: dict[str, Any]) -> dict[str, Any]:
     return {"solver": raw.solver, "system": raw.system, "element_count": raw.element_count,
             "collector_version": raw.collector_version, "buses": raw.buses,
-            "lines": raw.lines, "transformers": raw.transformers, "cache": cache}
+            "lines": raw.lines, "transformers": raw.transformers, "cache": cache,
+            "power_conversion_elements": raw.power_conversion_elements,
+            "power_conversion_elements_coverage": raw.power_conversion_elements_coverage,
+            "auxiliary_elements": raw.auxiliary_elements}
 
 __all__ = [
     "ToolFailure",
@@ -90,6 +93,9 @@ class TaskContext:
     pending_solve_cache: tuple[str, OpenDSSRawResult, SolverExecutionResult] | None = None
     # 服务可延迟到解释等后续阶段完成后提交；独立工具默认仍在验证通过后提交。
     defer_cache_commit: bool = False
+    # None retains the legacy policy. An empty tuple forbids every recovery
+    # action; the independent professional entry uses this strict boundary.
+    allowed_recovery_actions: tuple[str, ...] | None = None
     # 记录注册工具实际收到的每次 Solve 返回，包含恢复前的失败；不含 Compile 内部求解。
     solve_history: list[dict[str, Any]] = field(default_factory=list)
 
@@ -287,6 +293,45 @@ class BuildSolverProfileTool(BaseTool):
         )
         ctx.solver_profile = profile
         ctx.adapter.apply_solver_profile(ctx.circuit, profile)
+        expected_frequency = ctx.task_spec.constraints.hard.get("expected_frequency_hz")
+        if expected_frequency is not None:
+            guard = getattr(ctx.adapter, "require_frequency", None)
+            try:
+                if not callable(guard):
+                    raise AdapterError(ErrorCode.VALIDATION_FAILED, "此通道尚未接通运行频率核对")
+                check = guard(expected_frequency)
+            except AdapterError as exc:
+                ctx.save_json("operating_conditions_verification.json", {
+                    "task_id": ctx.task_spec.task_id,
+                    "frequency": getattr(ctx.adapter, "last_frequency_check", None),
+                    "expected_frequency_hz": expected_frequency,
+                    "status": "rejected", "frequency_modified": False, "error": exc.message,
+                })
+                raise ToolFailure(exc.code, TaskStatus.VALIDATION_FAILED, exc.message) from exc
+            ctx.save_json("operating_conditions_verification.json", {
+                "task_id": ctx.task_spec.task_id, "frequency": check,
+                "status": "matched", "frequency_modified": False,
+            })
+        expected_devices = ctx.task_spec.constraints.hard.get("expected_device_semantics")
+        if expected_devices is not None:
+            guard = getattr(ctx.adapter, "require_device_semantics", None)
+            try:
+                if not callable(guard):
+                    raise AdapterError(ErrorCode.VALIDATION_FAILED, "此通道尚未接通设备声明核对")
+                checked = guard(expected_devices)
+            except AdapterError as exc:
+                ctx.save_json("device_connections_verification.json", {
+                    "task_id": ctx.task_spec.task_id, "status": "rejected",
+                    "check": getattr(ctx.adapter, "last_device_check", None),
+                    "case_fingerprint": ctx.case.case_fingerprint,
+                    "electrical_parameters_modified": False, "error": exc.message,
+                })
+                raise ToolFailure(exc.code, TaskStatus.VALIDATION_FAILED, exc.message) from exc
+            ctx.save_json("device_connections_verification.json", {
+                "task_id": ctx.task_spec.task_id, "status": "matched", "check": checked,
+                "case_fingerprint": ctx.case.case_fingerprint,
+                "electrical_parameters_modified": False,
+            })
         ctx.save_json("solver_profile.json", profile)
         return {"profile_id": profile.profile_id, "params": profile.param_dict()}
 
@@ -521,6 +566,9 @@ class RunPowerFlowTool(BaseTool):
                 "buses": raw.buses,
                 "lines": raw.lines,
                 "transformers": raw.transformers,
+                "power_conversion_elements": raw.power_conversion_elements,
+                "power_conversion_elements_coverage": raw.power_conversion_elements_coverage,
+                "auxiliary_elements": raw.auxiliary_elements,
                 "duration_s": round(float(solve_result.duration_s), 3),
             }
             tmp = path + ".tmp"

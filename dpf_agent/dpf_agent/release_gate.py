@@ -37,17 +37,28 @@ import uuid
 SCHEMA_VERSION = 1
 DEFAULT_SUITE = "dpf_agent.tests.run_all"
 UI_CHECKS = ("verify_races.js", "verify_backend_lifecycle.js", "verify_render.js")
-DISCOVERED_UI_CHECKS = ("verify_batch.js",)
+DISCOVERED_UI_CHECKS = ("verify_batch.js", "verify_launcher.js")
+SUPPORT_FILES = ("dpf_agent/requirements-com.txt", "dpf_agent/requirements-windows-py313.lock.txt",
+                 "scripts/install-electron.py", "scripts/run-demo.ps1", "scripts/启动天枢一号.bat",
+                 "scripts/start-harness.js", "scripts/start-legacy.bat")
 SOURCE_SCOPE = {
-    "recursive_roots": ["dpf_agent/dpf_agent", "tianshu_ui"],
+    "recursive_roots": ["dpf_agent/dpf_agent", "tianshu_ui", "integrations/deepseek-harness",
+                        "examples/professional-extension"],
     "backend_root_files": ["requirements.txt", "pyproject.toml", "setup.cfg", "setup.py", "run.py", "run_cli.py", "start_backend.py"],
+    "support_files": list(SUPPORT_FILES),
     "excluded_directories": [".git", ".venv", "node_modules", "__pycache__", "chat_data", "tasks", "outputs", "logs", "build", "dist"],
     "excluded_files": [".env*", "*credentials*", "settings.json", "*.pyc", "*.pyo", "*.log", "*.tmp"],
 }
 _EXCLUDED_DIRS = set(SOURCE_SCOPE["excluded_directories"])
 _REQUIRED_FILES = ("dpf_agent/dpf_agent/__init__.py", "dpf_agent/dpf_agent/web/conversion_cache.py",
                    "dpf_agent/dpf_agent/tests/run_all.py", "dpf_agent/requirements.txt",
-                   "tianshu_ui/package.json", "tianshu_ui/main.js", *[f"tianshu_ui/{name}" for name in UI_CHECKS])
+                   "tianshu_ui/package.json", "tianshu_ui/main.js", "tianshu_ui/setup-electron.js",
+                   *SUPPORT_FILES, *[f"tianshu_ui/{name}" for name in UI_CHECKS],
+                   "integrations/deepseek-harness/package.json", "integrations/deepseek-harness/index.js",
+                   "integrations/deepseek-harness/cordis.patch.yml", "integrations/deepseek-harness/lib/bridge.js",
+                   "integrations/deepseek-harness/lib/runtime.js", "integrations/deepseek-harness/service_host.py",
+                   "examples/professional-extension/read_only_extension.py",
+                   "examples/professional-extension/README.md")
 
 
 @dataclass(frozen=True)
@@ -121,6 +132,12 @@ def source_inventory(root: Path) -> dict[str, dict[str, Any]]:
             files.append(candidate)
     for candidate in backend.glob("start*.bat"):
         if candidate.is_file():
+            files.append(candidate)
+    for relative in SUPPORT_FILES:
+        candidate = root / relative
+        if candidate.is_file():
+            if candidate.is_symlink():
+                raise ValueError(f"Delivery support file symlink is unsupported: {relative}")
             files.append(candidate)
     inventory = {path.relative_to(root).as_posix(): {"sha256": _sha256(path), "bytes": path.stat().st_size}
                  for path in sorted(set(files))}

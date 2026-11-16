@@ -32,6 +32,7 @@ from __future__ import annotations
 import sys
 import threading
 import time
+from types import SimpleNamespace
 
 from ..engines.opendss_com_adapter import OpenDSSComAdapter, _ComWorker
 from ..engines.opendss_adapter import AdapterError
@@ -58,6 +59,11 @@ class _FakeEngine:
 
     def __init__(self) -> None:
         self.version = "fake-9.9"
+        # Headless workers now disable host-setting persistence at startup.
+        # This fixture models only acceptance of that command; registry
+        # rejection/readback and native persistence have separate coverage.
+        self.Text = SimpleNamespace(Command="")
+        self.Error = SimpleNamespace(Number=0, Description="")
         self.calls: list[str] = []
         self._hang_pred = None
         self._lock = threading.Lock()
@@ -463,9 +469,11 @@ def case_llm_decisions_bounded() -> None:
           "不要执行、不要下结论、不要报任何数字" in get_prompt("clarify_ask"))
 
     # ---- B. 结构：内部/上传/内置三类候选同源，不再两处硬编码 ----
-    check("D6 内置算例名单只有一处定义（避免两处白名单漂移）",
+    check("D6 内置注册名单按本机真实Master判断可用（允许发布版不包含IEEE）",
           isinstance(ca._BUILTIN_CASE_NAMES, tuple)
-          and all(ca._is_known_builtin_case(n) for n in ca._BUILTIN_CASE_NAMES),
+          and all(ca._is_known_builtin_case(n) == ca.os.path.isfile(
+              ca.os.path.join(ca.AgentConfig().cases_root, n, "Master.dss"))
+              for n in ca._BUILTIN_CASE_NAMES),
           str(ca._BUILTIN_CASE_NAMES))
     check("D7 chat_api 已调用消歧与澄清入口（防回归：不能被改回写死文案）",
           "_case_not_found_reply(" in inspect.getsource(ca)

@@ -12,6 +12,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from pydantic import BaseModel
 
+from .. import __version__
 from ..application.progress import is_finished
 from ..application.service import ApplicationService, TaskBusyError
 from ..config import AgentConfig
@@ -32,7 +33,7 @@ def index() -> str:
     if os.path.isfile(p):
         with open(p, encoding="utf-8") as f:
             return f.read()
-    return "<h1>天枢一号 Web 服务</h1><p>static/index.html 未找到</p>"
+    return "<h1>天智五号 Web 服务</h1><p>static/index.html 未找到</p>"
 
 
 def _get_service(req: RunRequest | None = None) -> ApplicationService:
@@ -298,6 +299,7 @@ def health() -> JSONResponse:
     return JSONResponse({
         "status": "ok",
         "service": "tianshu-1",
+        "backend_version": __version__,
         "llm_base_url": cfg.llm_base_url,
         "llm_model": cfg.llm_model,
     })
@@ -323,6 +325,8 @@ async def ready() -> JSONResponse:
         只要有一路可用就算就绪——聊天层会自动选路，离线时不会因为没有
         Power-RAG 而判定为不可用。
         """
+        if not cfg.rag_enabled and not cfg.power_rag_enabled:
+            return False, "知识检索未启用；不影响离线潮流计算"
         from ..rag.pipeline import get_pipeline
         try:
             st = get_pipeline().status()
@@ -330,7 +334,7 @@ async def ready() -> JSONResponse:
             return False, f"知识库模块异常：{exc}"
 
         pr = st.get("power_rag") or {}
-        local_ready = bool(st.get("index_exists")) and bool(st.get("knowledge_exists"))
+        local_ready = bool(st.get("enabled")) and bool(st.get("index_exists")) and bool(st.get("knowledge_exists"))
 
         if pr.get("enabled") and pr.get("ok"):
             pts = pr.get("points_count")
@@ -347,8 +351,8 @@ async def ready() -> JSONResponse:
                 f"本地知识库就绪：{st.get('num_sources')} 份文档 / "
                 f"{st.get('num_chunks')} 个片段（{reason}）"
             )
-        if st.get("knowledge_exists"):
-            return True, f"知识库目录就绪但未建索引（{reason}；调 /api/rag/ingest）"
+        if st.get("enabled") and st.get("knowledge_exists"):
+            return False, f"知识库目录存在但索引未就绪（{reason}；可重建索引）"
         return False, f"无可用知识库：{reason}；本地目录 {st.get('knowledge_dir')} 不存在"
 
     model_ok = bool(cfg.llm_enabled and cfg.llm_base_url and cfg.llm_model)
@@ -366,7 +370,7 @@ async def ready() -> JSONResponse:
     rag_ok, rag_detail = await run_in_threadpool(_probe_rag)
 
     sidecar_ok = True
-    sidecar_detail = "FastAPI 8000 健康检查自检通过"
+    sidecar_detail = "本次后端 HTTP 请求可达"
     license_ok = True
     license_detail = "自有源码采用 Apache-2.0；引擎与依赖遵循各自许可，见 THIRD_PARTY_NOTICES.md"
     skills_ok, skills_detail = await run_in_threadpool(_probe_skills)
@@ -375,15 +379,18 @@ async def ready() -> JSONResponse:
         return "ok" if ok else "warn"
 
     return JSONResponse({
+        "backend_version": __version__,
         "overall_ok": all([model_ok, engine_ok, sidecar_ok, license_ok, storage_ok, skills_ok]),
         "checks": {
-            "model":     {"ok": model_ok,   "level": map_level(model_ok),   "detail": model_detail},
-            "engine":    {"ok": engine_ok,  "level": map_level(engine_ok),  "detail": engine_detail},
+            "model":     {"ok": model_ok, "enabled": bool(cfg.llm_enabled), "configured": bool(cfg.llm_base_url and cfg.llm_model), "level": map_level(model_ok), "detail": model_detail},
+            "engine":    {"ok": engine_ok, "backend": cfg.engine_backend, "level": map_level(engine_ok), "detail": engine_detail},
             "sidecar":   {"ok": sidecar_ok, "level": map_level(sidecar_ok), "detail": sidecar_detail},
             "license":   {"ok": license_ok, "level": map_level(license_ok), "detail": license_detail},
             "storage":   {"ok": storage_ok, "level": map_level(storage_ok), "detail": storage_detail},
             "skills":    {"ok": skills_ok,  "level": map_level(skills_ok),  "detail": skills_detail},
-            "knowledge": {"ok": rag_ok,     "level": map_level(rag_ok),     "detail": rag_detail},
+            "knowledge": {"ok": rag_ok, "enabled": bool(cfg.rag_enabled or cfg.power_rag_enabled),
+                          "local_enabled": bool(cfg.rag_enabled), "power_rag_enabled": bool(cfg.power_rag_enabled),
+                          "level": map_level(rag_ok), "detail": rag_detail},
         },
     })
 
@@ -404,14 +411,14 @@ def _compute_ready() -> dict:
     model_ok = bool(cfg.llm_enabled and cfg.llm_base_url and cfg.llm_model)
     model_detail = f"{cfg.llm_model} @ {cfg.llm_base_url}（实际可达性在首次推理时验证）"
 
-    # 引擎：当前内置 OpenDSS（dss-python）；导入失败即引擎未就绪
+    # 引擎：按当前配置检查注册/可定位状态，不声称已经执行真实求解。
     engine_ok, engine_detail = _probe_engine()
 
     # 本地存储：cases 目录 + outputs 目录可写
     storage_ok, storage_detail = _probe_storage(case_count)
 
     sidecar_ok = True
-    sidecar_detail = "FastAPI 8000 健康检查自检通过"
+    sidecar_detail = "本次后端 HTTP 请求可达"
     license_ok = True
     license_detail = "自有源码采用 Apache-2.0；引擎与依赖遵循各自许可，见 THIRD_PARTY_NOTICES.md"
 
@@ -421,10 +428,11 @@ def _compute_ready() -> dict:
         return "ok" if ok else "warn"
 
     return {
+        "backend_version": __version__,
         "overall_ok": all([model_ok, engine_ok, sidecar_ok, license_ok, storage_ok, skills_ok]),
         "checks": {
-            "model":     {"ok": model_ok,   "level": map_level(model_ok),   "detail": model_detail},
-            "engine":    {"ok": engine_ok,  "level": map_level(engine_ok),  "detail": engine_detail},
+            "model":     {"ok": model_ok, "enabled": bool(cfg.llm_enabled), "configured": bool(cfg.llm_base_url and cfg.llm_model), "level": map_level(model_ok), "detail": model_detail},
+            "engine":    {"ok": engine_ok, "backend": cfg.engine_backend, "level": map_level(engine_ok), "detail": engine_detail},
             "sidecar":   {"ok": sidecar_ok, "level": map_level(sidecar_ok), "detail": sidecar_detail},
             "license":   {"ok": license_ok, "level": map_level(license_ok), "detail": license_detail},
             "storage":   {"ok": storage_ok, "level": map_level(storage_ok), "detail": storage_detail},

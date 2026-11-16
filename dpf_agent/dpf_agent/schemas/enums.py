@@ -123,8 +123,8 @@ CAPABILITY_STATUS: dict[Capability, str] = {
     Capability.VOLTAGE_DEPENDENT_LOAD: "conditional",
     Capability.AUTO_CONTROL: "later_phase",
     # 2026-09-18：分相建模 + 不对称度量已落地并回归通过，由 later_phase 改为 conditional。
-    # 不是 mvp_candidate 的原因：转换类算例按「平衡三相等值」建模（原始相别信息不保留），
-    # 且不平衡度限值判定待与 GB/T 15543 原文核对 —— 属"能做但有边界"。
+    # 表格转换有显式相别时按输入建模，无相别及MATPOWER静态矩阵使用平衡模型；
+    # 接线/零序和连续相移有范围限制，不平衡度限值待与 GB/T 15543 原文核对。
     Capability.THREE_PHASE_UNBALANCED: "conditional",
     Capability.PROBABILISTIC_POWERFLOW: "research_only",
     Capability.DATA_DRIVEN_POWERFLOW: "research_only",
